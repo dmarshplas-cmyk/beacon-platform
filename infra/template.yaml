@@ -1,0 +1,698 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Energy sub-metering platform - analysis tier.
+  Tables (config, readings, rollups), weekly rollup Lambda, EventBridge schedule
+  (created DISABLED - enable once live data is flowing).
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional email for the weekly attention digest (SNS confirmation email is sent on deploy)
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Resources:
+
+  # ------------------------------------------------------------ Tables
+  ConfigTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: el_config
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  ReadingsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: el_events
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: circuit_id
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      KeySchema:
+        - AttributeName: circuit_id
+          KeyType: HASH
+        - AttributeName: ts
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  RollupsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: el_records
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  # ------------------------------------------------------------ Lambda
+  RollupFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: el-compliance-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: el-compliance-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - aws-marketplace:ViewSubscriptions
+                  - aws-marketplace:Subscribe
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt ConfigTable.Arn
+                  - !GetAtt ReadingsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt RollupsTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  RollupAlertsPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref RollupFunctionRole
+      PolicyName: el-compliance-alerts
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sns:Publish
+            Resource: !Ref AlertsTopic
+
+  RollupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: el-compliance
+      Description: Daily compliance state - luminaire/site/tenant
+      Runtime: nodejs24.x
+      Handler: el-compliance-handler.handler
+      Role: !GetAtt RollupFunctionRole.Arn
+      MemorySize: 512
+      Timeout: 300
+      Environment:
+        Variables:
+          CONFIG_TABLE: !Ref ConfigTable
+          EVENTS_TABLE: !Ref ReadingsTable
+          RECORDS_TABLE: !Ref RollupsTable
+          ALERTS_TOPIC_ARN: !Ref AlertsTopic
+          BEDROCK_MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+          DASHBOARD_URL: !Sub "https://${DashboardDistribution.DomainName}"
+          DEFAULT_TZ: Europe/London
+      Code:
+        ZipFile: "exports.handler = async () => 'placeholder - run update-function-code';"
+
+
+  # ------------------------------------------------------------ Ingest (generic webhook)
+  IngestFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: el-ingest-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: el-ingest-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource: !GetAtt ConfigTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt ReadingsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt RollupsTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  IngestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: el-ingest
+      Description: Generic secure webhook ingest (any LNS / NB-IoT / native)
+      Runtime: nodejs24.x
+      Handler: el-ingest-handler.handler
+      Role: !GetAtt IngestFunctionRole.Arn
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          CONFIG_TABLE: !Ref ConfigTable
+          EVENTS_TABLE: !Ref ReadingsTable
+          RECORDS_TABLE: !Ref RollupsTable
+          EVENTS_TTL_DAYS: "400"
+          CACHE_SECONDS: "60"
+      Code:
+        ZipFile: "exports.handler = async () => 'placeholder - run update-function-code';"
+
+  IngestApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: el-ingest-api
+      ProtocolType: HTTP
+
+  IngestIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref IngestApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt IngestFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  IngestRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref IngestApi
+      RouteKey: "POST /ingest/{source}"
+      Target: !Sub "integrations/${IngestIntegration}"
+
+  IngestStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref IngestApi
+      StageName: "$default"
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+
+  IngestApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngestFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${IngestApi}/*/*/ingest/*"
+
+
+  # ------------------------------------------------------------ Cognito (tenant-scoped users)
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: el-users
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: "ON"
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: "Welcome to nXzen Beacon — your account is ready"
+          EmailMessage: !Sub >-
+            <html><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;"><tr><td align="center">
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e4e4e7;">
+            <tr><td style="background:#030304;padding:22px 32px;" align="left">
+            <img src="https://${DashboardDistribution.DomainName}/nxzen-wordmark.png" alt="nXzen" height="26" style="display:inline-block;vertical-align:middle;border:0;">
+            <span style="color:#8DE971;font-family:'Courier New',monospace;font-size:12px;letter-spacing:3px;margin-left:12px;vertical-align:middle;">BEACON</span>
+            </td></tr>
+            <tr><td style="padding:32px;">
+            <p style="margin:0 0 6px;color:#030304;font-size:20px;font-weight:bold;">Your Beacon account is ready</p>
+            <p style="margin:0 0 20px;color:#52525b;font-size:14px;line-height:1.6;">You've been invited to nXzen Beacon — emergency lighting compliance for your estate. Every fitting, every test, every month, on record.</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="background:#f4f4f5;border-radius:6px;width:100%;"><tr><td style="padding:16px 20px;">
+            <p style="margin:0 0 4px;color:#71717a;font-size:11px;letter-spacing:1px;">USERNAME</p>
+            <p style="margin:0 0 12px;color:#030304;font-size:14px;font-family:'Courier New',monospace;">{username}</p>
+            <p style="margin:0 0 4px;color:#71717a;font-size:11px;letter-spacing:1px;">TEMPORARY PASSWORD</p>
+            <p style="margin:0;color:#030304;font-size:14px;font-family:'Courier New',monospace;">{####}</p>
+            </td></tr></table>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;"><tr>
+            <td style="background:#8DE971;border-radius:6px;">
+            <a href="https://${DashboardDistribution.DomainName}" style="display:inline-block;padding:12px 28px;color:#07130a;font-size:14px;font-weight:bold;text-decoration:none;">Open Beacon</a>
+            </td></tr></table>
+            <p style="margin:0 0 8px;color:#030304;font-size:14px;font-weight:bold;">First sign-in takes about two minutes:</p>
+            <ol style="margin:0 0 20px;padding-left:20px;color:#52525b;font-size:14px;line-height:1.8;">
+            <li>Sign in with the temporary password above</li>
+            <li>Choose your own password</li>
+            <li>Scan the QR code with an authenticator app (Google Authenticator, Authy or 1Password) and enter the 6-digit code</li>
+            </ol>
+            <p style="margin:0;color:#71717a;font-size:12px;line-height:1.6;">The temporary password expires in 7 days. You'll need your authenticator code each time you sign in — if you lose access to it, contact your platform administrator.</p>
+            </td></tr>
+            <tr><td style="background:#030304;padding:16px 32px;">
+            <p style="margin:0;color:#8DE971;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;">EVERY FITTING. EVERY TEST. ON RECORD.</p>
+            <p style="margin:4px 0 0;color:#52525b;font-size:11px;">This is an automated invitation from nXzen Beacon. If you weren't expecting it, you can ignore this email.</p>
+            </td></tr>
+            </table></td></tr></table></body></html>
+      Schema:
+        - Name: tenant_id
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: "1"
+            MaxLength: "64"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: el-web
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 8
+      IdTokenValidity: 8
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+  # ------------------------------------------------------------ Data API (JWT-protected)
+  ApiFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: el-api-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: el-api-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - aws-marketplace:ViewSubscriptions
+                  - aws-marketplace:Subscribe
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt ConfigTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt RollupsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !GetAtt ReadingsTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: el-api
+      Description: Tenant-scoped data API (rollups + config reads)
+      Runtime: nodejs24.x
+      Handler: el-api-handler.handler
+      Role: !GetAtt ApiFunctionRole.Arn
+      MemorySize: 1024
+      Timeout: 30
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+          CONFIG_TABLE: !Ref ConfigTable
+          RECORDS_TABLE: !Ref RollupsTable
+          EVENTS_TABLE: !Ref ReadingsTable
+          CACHE_SECONDS: "60"
+      Code:
+        ZipFile: "exports.handler = async () => 'placeholder - run update-function-code';"
+
+  DataApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: el-data-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - authorization
+          - content-type
+        MaxAge: 3600
+
+  DataJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref DataApi
+      Name: cognito-jwt
+      AuthorizerType: JWT
+      IdentitySource:
+        - "$request.header.Authorization"
+      JwtConfiguration:
+        Audience:
+          - !Ref UserPoolClient
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+
+  DataIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref DataApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  DataRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DataApi
+      RouteKey: "GET /api/{proxy+}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref DataJwtAuthorizer
+      Target: !Sub "integrations/${DataIntegration}"
+
+  DataRouteSvc:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DataApi
+      RouteKey: "GET /svc/{proxy+}"
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${DataIntegration}"
+
+  DataRoutePost:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DataApi
+      RouteKey: "POST /api/{proxy+}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref DataJwtAuthorizer
+      Target: !Sub "integrations/${DataIntegration}"
+
+  DataStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref DataApi
+      StageName: "$default"
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+
+  DataApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DataApi}/*/*/api/*"
+
+  DataApiSvcPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DataApi}/*/*/svc/*"
+
+
+  # ------------------------------------------------------------ Scheduler (on/off schedules)
+  SchedulerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: el-scheduler-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: el-scheduler
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt ConfigTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt RollupsTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  SchedulerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: el-scheduler
+      Runtime: nodejs24.x
+      Handler: el-scheduler-handler.handler
+      Role: !GetAtt SchedulerFunctionRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          CONFIG_TABLE: !Ref ConfigTable
+          RECORDS_TABLE: !Ref RollupsTable
+      Code:
+        ZipFile: |
+          exports.handler = async () => ({ placeholder: true });
+
+  SchedulerSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: el-scheduler-tick
+      ScheduleExpression: rate(15 minutes)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SchedulerFunction.Arn
+          Id: scheduler
+
+  SchedulerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SchedulerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SchedulerSchedule.Arn
+
+  # ------------------------------------------------------------ Alerts
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: el-alerts
+      DisplayName: nXzen Beacon alerts
+
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ------------------------------------------------------------ Dashboard hosting
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "beacon-dashboard-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DashboardOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: el-dashboard-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  DashboardDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Energy NOC dashboard
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: dashboard-s3
+            DomainName: !GetAtt DashboardBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt DashboardOac.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: dashboard-s3
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${DashboardBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DashboardDistribution}"
+
+  # ------------------------------------------------------------ Schedule (DISABLED)
+  WeeklySchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: el-compliance-daily
+      Description: Daily analysis 03:00 UTC (digest emails Mondays only, gated in-handler)
+      ScheduleExpression: cron(0 3 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RollupFunction.Arn
+          Id: rollup
+
+  SchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RollupFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklySchedule.Arn
+
+Outputs:
+  ConfigTableName:
+    Value: !Ref ConfigTable
+  ReadingsTableName:
+    Value: !Ref ReadingsTable
+  RollupsTableName:
+    Value: !Ref RollupsTable
+  RollupFunctionName:
+    Value: !Ref RollupFunction
+  IngestFunctionName:
+    Value: !Ref IngestFunction
+  IngestEndpoint:
+    Description: Base URL - webhook is {this}/ingest/{source}
+    Value: !Sub "https://${IngestApi}.execute-api.${AWS::Region}.amazonaws.com"
+  DataApiEndpoint:
+    Description: Tenant-scoped data API base URL
+    Value: !Sub "https://${DataApi}.execute-api.${AWS::Region}.amazonaws.com"
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  DashboardBucketName:
+    Value: !Ref DashboardBucket
+  DashboardUrl:
+    Value: !Sub "https://${DashboardDistribution.DomainName}"
+  DashboardDistributionId:
+    Value: !Ref DashboardDistribution

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+response.json
+*.zip
+assignments-*.csv
+dashboard/dist/
+beacon-demo.html
+dashboard/public/config.json
+out.json
