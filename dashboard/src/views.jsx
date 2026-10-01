@@ -1,10 +1,14 @@
-/* views.jsx — Clearway console. Estate (luminaire wall) · Site · Luminaire · Exceptions · Reports */
+/* views.jsx — Clearway console. Estate · Site · Luminaire · Needs attention · Manual tests · Logbook */
 import React, { useEffect, useMemo, useState } from "react";
 import * as A from "./api.js";
-import { Panel, Led } from "./ui.jsx";
+import { Panel, Led, Skeleton, PageSkeleton, Chips, SearchBox, useToast, HoverCard } from "./ui.jsx";
+import EstateMap from "./EstateMap.jsx";
 
 const MONTHS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
 const go = (h) => { window.location.hash = h; };
+const rank = (s) => (s?.status === "alert" ? 2 : s?.status === "warn" ? 1 : 0);
+const STATUS_LABEL = { ok: "Compliant", warn: "Attention", alert: "Action needed", idle: "No data" };
+const SILENT_SITE_PCT = 0.6; // ≥ this share of fittings silent → treat the site as offline, not each fitting
 
 function useApi(path, deps = []) {
   const [data, setData] = useState(null);
@@ -19,97 +23,32 @@ function useApi(path, deps = []) {
   return { data, err, reload: () => setTick((t) => t + 1) };
 }
 
+const ErrorBox = ({ err }) => (
+  <div className="page"><div className="errorbox"><strong>Couldn't load this view.</strong><div className="muted">{err}</div><button className="btn ghost tiny" onClick={() => window.location.reload()}>Retry</button></div></div>
+);
+
 /* ---------- shared bits ---------- */
 
-/** Twelve-month function-test strip. */
 export function MonthStrip({ grid = [], year, size = "s" }) {
   return (
     <div className={`mstrip ${size}`} role="img" aria-label={`Monthly function tests ${year || ""}`}>
-      {grid.map((c, i) => (
-        <span key={i} className={`mcell ${c}`} title={`${MONTHS[i]} — ${c}`}>{size === "l" ? MONTHS[i] : ""}</span>
-      ))}
+      {grid.map((c, i) => <span key={i} className={`mcell ${c}`} title={`${MONTHS[i]} — ${c}`}>{size === "l" ? MONTHS[i] : ""}</span>)}
     </div>
   );
 }
 
-/** Rated-vs-achieved duration bar. */
 function DurationBar({ achieved, rated, result }) {
   if (achieved === null || achieved === undefined) return <span className="muted">—</span>;
-  const pct = Math.min(130, (achieved / rated) * 100);
   return (
     <div className="dbar" title={`${achieved} min achieved of ${rated} min rated`}>
-      <div className={`dbar-fill ${result || ""}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      <div className={`dbar-fill ${result || ""}`} style={{ width: `${Math.min(100, (achieved / rated) * 100)}%` }} />
       <div className="dbar-rated" />
       <span className="dbar-text num">{achieved}<span className="unit">/{rated}</span></span>
     </div>
   );
 }
 
-const STATUS_LABEL = { ok: "Compliant", warn: "Attention", alert: "Action needed", idle: "No data" };
 const StatusChip = ({ status }) => <span className={`chip ${status === "ok" ? "amber" : status === "alert" ? "alert" : status === "warn" ? "warn" : ""}`}><Led status={status} />{STATUS_LABEL[status] || status}</span>;
-
-/* ---------- Estate ---------- */
-
-export function Estate() {
-  const { data, err } = useApi("/api/portfolio");
-  const [hover, setHover] = useState(null);
-  if (err) return <div className="loading">{err}</div>;
-  if (!data) return <div className="loading">Loading estate…</div>;
-  const t = data.totals[0] || {};
-  const sites = [...data.sites].sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
-  const year = new Date().getFullYear();
-
-  return (
-    <div className="page estate-page">
-      <div className="page-head">
-        <div>
-          <h1 className="h1">Cambrian Housing</h1>
-          <div className="sub muted">{t.sites} sites · {t.luminaires} emergency luminaires · state as of {A.fmtDateTime(t.computed_at)}</div>
-        </div>
-        <div className="kpi-row">
-          <Kpi label="Compliant" value={A.fmtPct(t.compliant_pct)} tone={t.compliant_pct >= 98 ? "ok" : t.compliant_pct >= 90 ? "warn" : "alert"} />
-          <Kpi label="Overdue tests" value={t.overdue} tone={t.overdue ? "warn" : "ok"} />
-          <Kpi label="Failed tests" value={t.failed} tone={t.failed ? "alert" : "ok"} />
-          <Kpi label="Open faults" value={t.open_faults} tone={t.open_faults ? "warn" : "ok"} />
-          <Kpi label="Silent fittings" value={sites.reduce((a, s) => a + (s.stale || 0), 0)} tone={sites.some((s) => s.stale) ? "warn" : "ok"} />
-        </div>
-      </div>
-
-      <div className="estate-grid">
-        <Panel className="wall-panel" title="Every luminaire" right={<span className="legend-line"><i className="mcell pass" /> compliant <i className="mcell due" /> test due <i className="mcell missed" /> overdue or fault <i className="mcell silent" /> silent</span>}>
-          <Wall sites={sites} onHover={setHover} />
-          <div className="wall-caption muted">{hover ? hover : "Each cell is one fitting. Hover a block to see the site; click to open it."}</div>
-        </Panel>
-
-        <Panel className="attn-panel" title="Needs attention" right={<a href="#/exceptions">Open queue</a>}>
-          <AttentionList sites={sites} />
-        </Panel>
-      </div>
-
-      <Panel title={`Sites — monthly function tests ${year}`}>
-        <table className="tbl sites-tbl">
-          <thead><tr><th className="led-col"></th><th>Site</th><th className="r">Fittings</th><th className="r">Compliant</th><th>Function tests</th><th className="r">Overdue</th><th className="r">Faults</th><th className="r">Silent</th></tr></thead>
-          <tbody>
-            {sites.map((s) => (
-              <tr key={s.site_id} className="rowlink" onClick={() => go(`/site/${s.site_id}`)}>
-                <td className="led-col"><Led status={s.status} /></td>
-                <td><strong>{s.name}</strong><span className="muted"> {s.address?.town}</span></td>
-                <td className="r num">{s.luminaires}</td>
-                <td className="r num">{A.fmtPct(s.compliant_pct)}</td>
-                <td><MonthStrip grid={s.month_grid} /></td>
-                <td className={`r num ${s.overdue ? "warn-text" : ""}`}>{s.overdue || "—"}</td>
-                <td className={`r num ${s.open_faults ? "warn-text" : ""}`}>{s.open_faults || "—"}</td>
-                <td className={`r num ${s.stale ? "warn-text" : ""}`}>{s.stale || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
-    </div>
-  );
-}
-
-const rank = (s) => (s.status === "alert" ? 2 : s.status === "warn" ? 1 : 0);
 
 function Kpi({ label, value, tone, small }) {
   return (
@@ -120,85 +59,231 @@ function Kpi({ label, value, tone, small }) {
   );
 }
 
-/** The wall: one cell per luminaire, grouped by site. Blocks size to fitting count. */
-function Wall({ sites, onHover }) {
-  const { data } = useApi("/api/exceptions");
-  const cellState = useMemo(() => {
-    const m = {};
-    for (const e of data?.exceptions || []) m[e.luminaire_id] = e.state.status === "alert" ? "missed" : e.state.comms === "stale" ? "silent" : "due";
-    return m;
-  }, [data]);
-  return (
-    <div className="wall">
-      {sites.map((s) => (
-        <button key={s.site_id} className={`wall-block ${s.status}`} style={{ "--cols": Math.max(4, Math.ceil(Math.sqrt(s.luminaires * 2.2))) }} onClick={() => go(`/site/${s.site_id}`)}
-          onMouseEnter={() => onHover(`${s.name} — ${s.luminaires} fittings, ${A.fmtPct(s.compliant_pct)} compliant${s.overdue ? `, ${s.overdue} overdue` : ""}${s.open_faults ? `, ${s.open_faults} open faults` : ""}`)}
-          onMouseLeave={() => onHover(null)} aria-label={s.name}>
-          <div className="wall-cells">
-            {Array.from({ length: s.luminaires }, (_, i) => {
-              const id = `${s.site_id}-el-${String(i + 1).padStart(2, "0")}`;
-              const st = cellState[id] || (s.status === "alert" && !data ? "pass" : "pass");
-              return <i key={i} className={`wcell ${st}`} />;
-            })}
-          </div>
-          <div className="wall-name">{s.name}</div>
-        </button>
-      ))}
-    </div>
-  );
-}
+const cls = (due, result) => (result === "fail" ? "alert-text" : due === "overdue" ? "alert-text" : ["due", "never", "due-soon"].includes(due) || result === "pass-marginal" ? "warn-text" : "");
+const nextAutoText = (d) => (!d || d.function_in_days == null ? "—" : d.function_in_days === 0 ? "function due" : `fn in ${d.function_in_days} d${d.duration_in_days != null ? ` · dur in ${d.duration_in_days} d` : ""}`);
 
-function AttentionList({ sites }) {
-  const { data } = useApi("/api/exceptions");
-  if (!data) return <div className="muted">Loading…</div>;
-  const items = data.exceptions.slice(0, 7);
-  if (!items.length) return <div className="empty">Nothing needs attention. Every fitting is tested, on schedule and reporting.</div>;
-  return (
-    <div className="attn-list">
-      {items.map((e) => (
-        <button key={e.luminaire_id} className={`attn ${e.state.status}`} onClick={() => go(`/luminaire/${e.luminaire_id}`)}>
-          <Led status={e.state.status} />
-          <div className="attn-body">
-            <div className="attn-title">{e.site_name} · {e.name} <span className="muted">{e.location}</span></div>
-            <div className="attn-why">{whyText(e)}</div>
-          </div>
-        </button>
-      ))}
-      {data.count > items.length && <a className="more" href="#/exceptions">{data.count - items.length} more in the queue</a>}
-    </div>
-  );
-}
-
+/** One-line reason a fitting needs attention. */
 function whyText(e) {
   const s = e.state, parts = [];
-  const f = e.faults?.find((x) => x.status !== "closed");
+  const f = e.faults?.find((x) => x.status !== "closed" && x.subsystem !== "comms");
   if (f) parts.push(f.summary);
   if (s.duration_test?.last?.result === "fail") parts.push(`Duration test failed: ${s.duration_test.last.reason}`);
   if (s.duration_test?.last?.result === "pass-marginal") parts.push("Duration test marginal — battery nearing end of life");
   if (s.function_test?.status === "overdue") parts.push(`Function test ${A.dueText(s.function_test)}`);
   if (s.duration_test?.status === "overdue") parts.push(`Duration test ${A.dueText(s.duration_test)}`);
   if (s.duration_test?.status === "never") parts.push("No duration test on record");
-  if (s.comms === "stale" && !f) parts.push(`Silent since ${A.fmtDateTime(s.last_seen)}`);
+  if (s.comms === "stale") parts.push(`Silent since ${A.fmtDateTime(s.last_seen)}`);
   if (s.battery_low && !f) parts.push(`Battery ${A.fmtMv(s.battery_mv)} — low`);
   if (!parts.length && s.function_test?.status === "due") parts.push("Function test due");
   return parts[0] || "Needs review";
+}
+
+/**
+ * Group exceptions: sites where most fittings are silent become one "site offline"
+ * item; everything else stays per fitting (with silence noted, not duplicated).
+ */
+function groupExceptions(exceptions = [], sitesById = {}) {
+  const bySite = {};
+  for (const e of exceptions) (bySite[e.site_id] ||= []).push(e);
+  const siteItems = [], fittingItems = [];
+  for (const [siteId, list] of Object.entries(bySite)) {
+    const total = sitesById[siteId]?.luminaires || list.length;
+    const silent = list.filter((e) => e.state.comms === "stale");
+    if (silent.length >= Math.max(3, Math.ceil(total * SILENT_SITE_PCT))) {
+      const since = silent.map((e) => e.state.last_seen).filter(Boolean).sort().at(-1);
+      siteItems.push({ kind: "site-offline", site_id: siteId, site_name: list[0].site_name, total, silent: silent.length, since, status: "warn",
+        comms_faults: silent.flatMap((e) => (e.faults || []).filter((f) => f.subsystem === "comms" && f.status === "open").map((f) => ({ luminaire_id: e.luminaire_id, opened_at: f.opened_at }))) });
+      for (const e of list) {
+        const hasOther = e.state.status === "alert" || (e.faults || []).some((f) => f.status !== "closed" && f.subsystem !== "comms") || ["overdue", "due", "never"].includes(e.state.function_test?.status) || ["overdue", "never"].includes(e.state.duration_test?.status) || ["fail", "pass-marginal"].includes(e.state.duration_test?.last?.result);
+        if (hasOther) fittingItems.push({ kind: "fitting", ...e, why: whyText({ ...e, state: { ...e.state, comms: "ok" } }) });
+      }
+    } else {
+      for (const e of list) fittingItems.push({ kind: "fitting", ...e, why: whyText(e) });
+    }
+  }
+  fittingItems.sort((a, b) => rank(b.state) - rank(a.state) || a.site_name.localeCompare(b.site_name) || a.name.localeCompare(b.name));
+  return { siteItems, fittingItems };
+}
+
+/* ---------- Estate ---------- */
+
+export function Estate() {
+  const { data, err } = useApi("/api/portfolio");
+  const exc = useApi("/api/exceptions");
+  const [view, setView] = useState(() => { try { return localStorage.getItem("cw_estate_view") || "wall"; } catch { return "wall"; } });
+  const [filter, setFilter] = useState("all");
+  const [q, setQ] = useState("");
+  const [card, setCard] = useState(null);
+  const cfg = A.getConfig() || {};
+  useEffect(() => { try { localStorage.setItem("cw_estate_view", view); } catch {} }, [view]);
+  const cellState = useMemo(() => {
+    const m = {};
+    for (const e of exc.data?.exceptions || []) m[e.luminaire_id] = e.state.status === "alert" ? "missed" : e.state.comms === "stale" ? "silent" : "due";
+    return m;
+  }, [exc.data]);
+
+  if (err) return <ErrorBox err={err} />;
+  if (!data) return <PageSkeleton />;
+  const t = data.totals[0] || {};
+  const sitesById = Object.fromEntries(data.sites.map((s) => [s.site_id, s]));
+  const grouped = exc.data ? groupExceptions(exc.data.exceptions, sitesById) : null;
+  const offline = new Set((grouped?.siteItems || []).map((s) => s.site_id));
+  const silentCount = data.sites.reduce((a, s) => a + (s.stale || 0), 0);
+  const silentPct = t.luminaires ? Math.round((silentCount / t.luminaires) * 100) : 0;
+
+  const all = [...data.sites].sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
+  const needle = q.trim().toLowerCase();
+  const sites = all.filter((s) => (filter === "all" || s.status === filter) && (!needle || s.name.toLowerCase().includes(needle) || (s.address?.town || "").toLowerCase().includes(needle) || (s.address?.postcode || "").toLowerCase().includes(needle)));
+  const counts = { alert: all.filter((s) => s.status === "alert").length, warn: all.filter((s) => s.status === "warn").length, ok: all.filter((s) => s.status === "ok").length };
+  const year = new Date().getFullYear();
+
+  const hover = (s, ev) => setCard({ x: ev.clientX, y: ev.clientY, status: s.status, title: s.name, lines: [
+    `${s.address?.town || ""} ${s.address?.postcode || ""}`.trim(),
+    `${s.luminaires} fittings · ${A.fmtPct(s.compliant_pct)} compliant`,
+    [s.overdue ? `${s.overdue} overdue` : null, s.failed ? `${s.failed} failed` : null, s.open_faults ? `${s.open_faults} faults` : null, s.stale ? `${s.stale} silent` : null].filter(Boolean).join(" · ") || "Nothing outstanding",
+  ] });
+
+  return (
+    <div className="page estate-page">
+      <HoverCard card={card} />
+      <div className="page-head">
+        <div>
+          <h1 className="h1">Cambrian Housing</h1>
+          <div className="sub muted">{t.sites} sites · {t.luminaires} emergency luminaires · state as of {A.fmtDateTime(t.computed_at)}</div>
+        </div>
+        <div className="kpi-row">
+          <Kpi label="Compliant" value={A.fmtPct(t.compliant_pct)} tone={t.compliant_pct >= 98 ? "ok" : t.compliant_pct >= 90 ? "warn" : "alert"} />
+          <Kpi label="Overdue tests" value={t.overdue} tone={t.overdue ? "warn" : "ok"} />
+          <Kpi label="Failed tests" value={t.failed} tone={t.failed ? "alert" : "ok"} />
+          <Kpi label="Open faults" value={t.open_faults} tone={t.open_faults ? "warn" : "ok"} />
+          <Kpi label="Silent" value={silentCount ? `${silentCount}` : "0"} tone={silentPct > 10 ? "alert" : silentCount ? "warn" : "ok"} />
+        </div>
+      </div>
+
+      {silentPct >= 50 && (
+        <div className="banner warn">
+          <strong>{silentPct}% of the estate is silent.</strong> That's usually connectivity, not luminaires — check the network server and gateways before working the queue.
+          {!cfg.demo && <span className="muted"> If this is seed data, run <code>seed-demo-estate.py --refresh</code> and the compliance job.</span>}
+        </div>
+      )}
+
+      <div className="toolbar">
+        <div className="seg">
+          {[["wall", "Wall"], ["map", "Map"], ["list", "List"]].map(([id, label]) => <button key={id} className={view === id ? "on" : ""} onClick={() => setView(id)}>{label}</button>)}
+        </div>
+        <Chips value={filter} onChange={setFilter} options={[{ id: "all", label: "All sites", count: all.length }, { id: "alert", label: "Action needed", count: counts.alert, tone: "alert" }, { id: "warn", label: "Attention", count: counts.warn, tone: "warn" }, { id: "ok", label: "Compliant", count: counts.ok, tone: "ok" }]} />
+        <SearchBox value={q} onChange={setQ} placeholder="Find a site, town or postcode" autoFocusKey="/" />
+      </div>
+
+      <div className="estate-grid">
+        <div className="estate-main">
+          {view === "wall" && (
+            <Panel className="wall-panel" title="Every luminaire" right={<span className="legend-line"><i className="mcell pass" /> compliant <i className="mcell due" /> test due <i className="mcell missed" /> failed or fault <i className="mcell silent" /> silent</span>}>
+              {!sites.length && <div className="empty">No sites match.</div>}
+              <div className="wall">
+                {sites.map((s) => (
+                  <button key={s.site_id} className={`wall-block ${s.status} ${offline.has(s.site_id) ? "offline" : ""}`} style={{ "--cols": Math.max(4, Math.ceil(Math.sqrt(s.luminaires * 2.2))) }}
+                    onClick={() => go(`/site/${s.site_id}`)} onMouseMove={(e) => hover(s, e)} onMouseLeave={() => setCard(null)} aria-label={s.name}>
+                    <div className="wall-head"><Led status={s.status} /><span className="wall-name">{s.name}</span><span className="wall-pct num">{s.compliant_pct != null ? `${Math.round(s.compliant_pct)}%` : ""}</span></div>
+                    <div className="wall-cells">
+                      {Array.from({ length: s.luminaires }, (_, i) => <i key={i} className={`wcell ${cellState[`${s.site_id}-el-${String(i + 1).padStart(2, "0")}`] || "pass"}`} />)}
+                    </div>
+                    {offline.has(s.site_id) && <div className="wall-flag">site offline</div>}
+                  </button>
+                ))}
+              </div>
+            </Panel>
+          )}
+          {view === "map" && (
+            <Panel title="Sites" right={<span className="muted">{sites.length} shown</span>}>
+              <EstateMap sites={sites} onSelect={(id) => go(`/site/${id}`)} demo={!!cfg.demo} />
+            </Panel>
+          )}
+          {(view === "list" || view === "wall") && (
+            <Panel title={`Sites — monthly function tests ${year}`}>
+              <div className="scroll-x">
+                <table className="tbl sites-tbl">
+                  <thead><tr><th className="led-col"></th><th>Site</th><th className="r">Fittings</th><th className="r">Compliant</th><th>Function tests</th><th className="r">Overdue</th><th className="r">Faults</th><th className="r">Silent</th></tr></thead>
+                  <tbody>
+                    {sites.map((s) => (
+                      <tr key={s.site_id} className="rowlink" onClick={() => go(`/site/${s.site_id}`)}>
+                        <td className="led-col"><Led status={s.status} /></td>
+                        <td><strong>{s.name}</strong><span className="muted"> {s.address?.town}</span>{offline.has(s.site_id) && <span className="tag warn">offline</span>}</td>
+                        <td className="r num">{s.luminaires}</td>
+                        <td className="r num">{A.fmtPct(s.compliant_pct)}</td>
+                        <td><MonthStrip grid={s.month_grid} /></td>
+                        <td className={`r num ${s.overdue ? "warn-text" : ""}`}>{s.overdue || "—"}</td>
+                        <td className={`r num ${s.open_faults ? "warn-text" : ""}`}>{s.open_faults || "—"}</td>
+                        <td className={`r num ${s.stale ? "warn-text" : ""}`}>{s.stale || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+        </div>
+
+        <Panel className="attn-panel" title="Needs attention" right={<a href="#/exceptions">Open queue{exc.data ? ` · ${exc.data.count}` : ""}</a>}>
+          {!grouped ? <Skeleton lines={6} /> : <AttentionRail grouped={grouped} />}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function AttentionRail({ grouped }) {
+  const { siteItems, fittingItems } = grouped;
+  const items = fittingItems.slice(0, siteItems.length ? 5 : 7);
+  if (!siteItems.length && !fittingItems.length) return <div className="empty good">Nothing needs attention. Every fitting is tested, on schedule and reporting.</div>;
+  return (
+    <div className="attn-list">
+      {siteItems.map((s) => (
+        <button key={s.site_id} className="attn site" onClick={() => go(`/site/${s.site_id}`)}>
+          <Led status="warn" />
+          <div className="attn-body">
+            <div className="attn-title">{s.site_name} <span className="tag warn">site offline</span></div>
+            <div className="attn-why">{s.silent} of {s.total} fittings silent since {A.fmtDateTime(s.since)} — likely gateway or network</div>
+          </div>
+        </button>
+      ))}
+      {items.map((e) => (
+        <button key={e.luminaire_id} className={`attn ${e.state.status}`} onClick={() => go(`/luminaire/${e.luminaire_id}`)}>
+          <Led status={e.state.status} />
+          <div className="attn-body">
+            <div className="attn-title">{e.site_name} · {e.name} <span className="muted">{e.location}</span></div>
+            <div className="attn-why">{e.why}</div>
+          </div>
+        </button>
+      ))}
+      {fittingItems.length > items.length && <a className="more" href="#/exceptions">{fittingItems.length - items.length} more fittings in the queue</a>}
+    </div>
+  );
 }
 
 /* ---------- Site ---------- */
 
 export function Site({ siteId }) {
   const { data, err, reload } = useApi(`/api/sites/${siteId}`);
-  const [running, setRunning] = useState(null);
-  if (err) return <div className="loading">{err}</div>;
-  if (!data) return <div className="loading">Loading site…</div>;
+  const toast = useToast();
+  const [running, setRunning] = useState(false);
+  const [filter, setFilter] = useState("all");
+  const [q, setQ] = useState("");
+  if (err) return <ErrorBox err={err} />;
+  if (!data) return <PageSkeleton />;
   const { site, state, luminaires, jobs = [] } = data;
-  const lums = [...luminaires].sort((a, b) => rank(b.state) - rank(a.state) || a.name.localeCompare(b.name));
   const year = new Date().getFullYear();
+  const needle = q.trim().toLowerCase();
+  const lums = [...luminaires].sort((a, b) => rank(b.state) - rank(a.state) || a.name.localeCompare(b.name))
+    .filter((l) => (filter === "all" || l.state.status === filter) && (!needle || l.name.toLowerCase().includes(needle) || (l.location || "").toLowerCase().includes(needle) || (l.dev_eui || "").toLowerCase().includes(needle)));
+  const counts = { alert: luminaires.filter((l) => l.state.status === "alert").length, warn: luminaires.filter((l) => l.state.status === "warn").length, ok: luminaires.filter((l) => l.state.status === "ok").length };
+  const silentShare = state.luminaires ? (state.stale || 0) / state.luminaires : 0;
 
-  const runAll = async (type) => {
-    setRunning(type);
-    try { for (const l of luminaires) await A.apiPost("/api/control/test", { luminaire_id: l.luminaire_id, test_type: type }); }
-    finally { setRunning(null); }
+  const runAll = async () => {
+    setRunning(true);
+    try { let ok = 0, skipped = 0; for (const l of luminaires) { try { await A.apiPost("/api/control/test", { luminaire_id: l.luminaire_id, test_type: "function" }); ok++; } catch { skipped++; } }
+      toast(`Function test sent to ${ok} fittings${skipped ? `, ${skipped} skipped (no downlink bytes yet)` : ""}.`, skipped ? "warn" : "ok"); }
+    finally { setRunning(false); }
   };
 
   return (
@@ -218,31 +303,37 @@ export function Site({ siteId }) {
         </div>
       </div>
 
+      {silentShare >= SILENT_SITE_PCT && (
+        <div className="banner warn"><strong>Site offline.</strong> {state.stale} of {state.luminaires} fittings haven't reported — that's the gateway or backhaul, not {state.stale} broken luminaires. Fix connectivity first; the queue clears itself when they report.</div>
+      )}
+
       <div className="grid three">
         <Panel title={`Function tests ${year}`}>
           <MonthStrip grid={state.month_grid} year={year} size="l" />
-          <div className="muted small-note">A month is green when every fitting passed a function test in it.</div>
+          <div className="muted small-note">Green when every fitting passed a function test that month.</div>
         </Panel>
         <Panel title="Automatic testing" right={<span className="muted">BS EN 62034</span>}>
           <AutoTesting luminaires={luminaires} />
         </Panel>
         <Panel title="Manual tests" right={<a href={`#/site/${siteId}/job`}>Schedule a test</a>}>
-          <div className="control-copy muted">Fittings test themselves. Use this when you need a test outside the cycle — after a battery swap, before an inspection, or to re-run a site after an outage.</div>
           <JobsList jobs={jobs} compact onChange={reload} />
           <div className="control-buttons">
-            <button className="btn ghost" disabled={!!running} onClick={() => runAll("function")}>{running === "function" ? "Sending…" : "Run function test now"}</button>
+            <button className="btn ghost" disabled={running} onClick={runAll}>{running ? "Sending…" : "Run function test now"}</button>
             <a className="btn ghost" href={`#/reports?site=${siteId}`}>Export logbook</a>
           </div>
         </Panel>
       </div>
 
-      <Panel title="Luminaires">
-        <table className="tbl lum-tbl">
-          <thead><tr><th className="led-col"></th><th>Fitting</th><th>Location</th><th>Function test</th><th>Duration test</th><th>Achieved</th><th>Next auto</th><th className="r">Battery</th><th>Last report</th></tr></thead>
-          <tbody>
-            {lums.map((l) => {
-              const s = l.state;
-              return (
+      <Panel title="Luminaires" right={<span className="muted">{lums.length} of {luminaires.length}</span>}>
+        <div className="toolbar inset">
+          <Chips value={filter} onChange={setFilter} options={[{ id: "all", label: "All", count: luminaires.length }, { id: "alert", label: "Action needed", count: counts.alert, tone: "alert" }, { id: "warn", label: "Attention", count: counts.warn, tone: "warn" }, { id: "ok", label: "Compliant", count: counts.ok, tone: "ok" }]} />
+          <SearchBox value={q} onChange={setQ} placeholder="Fitting, location or DevEUI" />
+        </div>
+        <div className="scroll-x">
+          <table className="tbl lum-tbl sticky">
+            <thead><tr><th className="led-col"></th><th>Fitting</th><th>Location</th><th>Function test</th><th>Duration test</th><th>Achieved</th><th>Next auto</th><th className="r">Battery</th><th>Last report</th></tr></thead>
+            <tbody>
+              {lums.map((l) => { const s = l.state; return (
                 <tr key={l.luminaire_id} className="rowlink" onClick={() => go(`/luminaire/${l.luminaire_id}`)}>
                   <td className="led-col"><Led status={s.status} /></td>
                   <td><strong>{l.name}</strong></td>
@@ -252,24 +343,16 @@ export function Site({ siteId }) {
                   <td><DurationBar achieved={s.duration_test?.last?.achieved_min} rated={s.duration_test?.rated_min} result={s.duration_test?.last?.result} /></td>
                   <td className="muted nowrap">{nextAutoText(l.device_next)}</td>
                   <td className={`r num ${s.battery_low ? "warn-text" : ""}`}>{A.fmtMv(s.battery_mv)}</td>
-                  <td className={s.comms === "stale" ? "warn-text" : "muted"}>{A.ago(s.last_seen)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  <td className={s.comms === "stale" ? "warn-text nowrap" : "muted nowrap"}>{A.ago(s.last_seen)}</td>
+                </tr>); })}
+            </tbody>
+          </table>
+        </div>
+        {!lums.length && <div className="empty">No fittings match.</div>}
       </Panel>
     </div>
   );
 }
-
-const cls = (due, result) => (result === "fail" ? "alert-text" : due === "overdue" ? "alert-text" : ["due", "never", "due-soon"].includes(due) || result === "pass-marginal" ? "warn-text" : "");
-const ordinal = (n) => (n ? `${n}${["th", "st", "nd", "rd"][(n % 10 > 3 || Math.floor(n % 100 / 10) === 1) ? 0 : n % 10]}` : "—");
-const monthName = (m) => (m ? ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m - 1] : "—");
-
-/* ---------- Automatic testing summary + manual jobs ---------- */
-
-const nextAutoText = (d) => (!d || d.function_in_days == null ? "—" : d.function_in_days === 0 ? "function due" : `fn in ${d.function_in_days} d${d.duration_in_days != null ? ` · dur in ${d.duration_in_days} d` : ""}`);
 
 function AutoTesting({ luminaires }) {
   const fn = luminaires.map((l) => l.device_next?.function_in_days).filter((x) => x != null);
@@ -285,18 +368,21 @@ function AutoTesting({ luminaires }) {
   );
 }
 
+/* ---------- Jobs ---------- */
+
 const JOB_STATUS = { pending: "warn", running: "cyan", done: "", cancelled: "" };
 function JobsList({ jobs, compact, onChange }) {
-  const list = [...jobs].sort((a, b) => (a.run_at < b.run_at ? 1 : -1)).slice(0, compact ? 4 : 50);
-  if (!list.length) return <div className="empty">No manual tests scheduled.</div>;
-  const cancel = async (j) => { await A.apiPost("/api/jobs/cancel", { job_id: j.job_id }); onChange?.(); };
+  const toast = useToast();
+  const list = [...jobs].sort((a, b) => (a.run_at < b.run_at ? 1 : -1)).slice(0, compact ? 3 : 50);
+  if (!list.length) return <div className="empty">No manual tests scheduled. Fittings test themselves; schedule one after a battery swap, before an inspection, or to re-run a site after an outage.</div>;
+  const cancel = async (j) => { await A.apiPost("/api/jobs/cancel", { job_id: j.job_id }); toast("Job cancelled."); onChange?.(); };
   return (
     <div className="jobs">
       {list.map((j) => (
         <div key={j.job_id} className={`job ${j.status}`}>
           <div className="job-head">
             <strong>{j.test_type === "duration" ? "Duration" : "Function"} test</strong>
-            <span className="muted">{j.scope?.luminaire_id ? `${j.scope_name}` : `${j.scope_name} — whole site`}</span>
+            <span className="muted">{j.scope?.luminaire_id ? j.scope_name : `${j.scope_name} — whole site`}</span>
             <span className={`chip ${JOB_STATUS[j.status] || ""}`}>{j.status}</span>
           </div>
           <div className="muted small-note">{j.status === "done" ? `Ran ${A.fmtDateTime(j.run_at)} · ${j.dispatched?.length || 0} fittings` : `${A.fmtDateTime(j.run_at)} · staggered over ${j.stagger_window_min} min`}{j.note ? ` · ${j.note}` : ""} · by {j.created_by}</div>
@@ -310,16 +396,17 @@ function JobsList({ jobs, compact, onChange }) {
 export function ScheduleJob({ siteId, luminaireId }) {
   const path = luminaireId ? `/api/luminaires/${luminaireId}` : `/api/sites/${siteId}`;
   const { data, err } = useApi(path);
+  const toast = useToast();
   const tomorrow = new Date(Date.now() + 86400000); tomorrow.setHours(2, 0, 0, 0);
   const [f, setF] = useState({ test_type: "function", run_at: tomorrow.toISOString().slice(0, 16), stagger_window_min: 60, note: "" });
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null);
-  if (err) return <div className="loading">{err}</div>;
-  if (!data) return <div className="loading">Loading…</div>;
+  if (err) return <ErrorBox err={err} />;
+  if (!data) return <PageSkeleton />;
   const name = luminaireId ? `${data.luminaire.site_name} · ${data.luminaire.name}` : data.site.name;
   const back = luminaireId ? `#/luminaire/${luminaireId}` : `#/site/${siteId}`;
   const save = async () => {
     setBusy(true); setMsg(null);
-    try { const r = await A.apiPost("/api/jobs", { ...f, run_at: new Date(f.run_at).toISOString(), scope: luminaireId ? { luminaire_id: luminaireId } : { site_id: siteId } }); setMsg(`Scheduled for ${A.fmtDateTime(r.job.run_at)}.`); setTimeout(() => go(back.slice(1)), 900); }
+    try { const r = await A.apiPost("/api/jobs", { ...f, run_at: new Date(f.run_at).toISOString(), scope: luminaireId ? { luminaire_id: luminaireId } : { site_id: siteId } }); toast(`Scheduled for ${A.fmtDateTime(r.job.run_at)}.`); go(back.slice(1)); }
     catch (e) { setMsg(e.message); } finally { setBusy(false); }
   };
   return (
@@ -333,17 +420,16 @@ export function ScheduleJob({ siteId, luminaireId }) {
         </div>
         <div className="form-row"><label>Why (goes in the logbook)<input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. re-test after battery replacement" /></label></div>
         {f.test_type === "duration" && <div className="muted small-note">Choose a quiet night. Fittings are depleted for up to 24 h afterwards, and a test is held back automatically if a real mains outage happened in the last 24 h.</div>}
-        <div className="control-buttons"><button className="btn" disabled={busy} onClick={save}>{busy ? "Scheduling…" : "Schedule"}</button>{msg && <span className="muted">{msg}</span>}</div>
+        <div className="control-buttons"><button className="btn" disabled={busy} onClick={save}>{busy ? "Scheduling…" : "Schedule"}</button>{msg && <span className="alert-text">{msg}</span>}</div>
       </Panel>
     </div>
   );
 }
 
-/* ---------- Jobs page ---------- */
 export function Jobs() {
   const { data, err, reload } = useApi("/api/jobs");
-  if (err) return <div className="loading">{err}</div>;
-  if (!data) return <div className="loading">Loading…</div>;
+  if (err) return <ErrorBox err={err} />;
+  if (!data) return <PageSkeleton />;
   return (
     <div className="page narrow">
       <div className="page-head"><div><a className="back" href="#/">Estate</a><h1 className="h1">Manual tests</h1><div className="sub muted">Scheduled, running and recent. Fittings run their routine tests on their own.</div></div></div>
@@ -357,18 +443,26 @@ export function Jobs() {
 export function Luminaire({ luminaireId }) {
   const { data, err, reload } = useApi(`/api/luminaires/${luminaireId}`);
   const ev = useApi(`/api/luminaires/${luminaireId}/events?hours=720`);
+  const toast = useToast();
   const [busy, setBusy] = useState(null);
-  const [msg, setMsg] = useState(null);
   const [manual, setManual] = useState(false);
-  if (err) return <div className="loading">{err}</div>;
-  if (!data) return <div className="loading">Loading luminaire…</div>;
-  const { luminaire: l, state: s, latest, tests, faults } = data;
+  const [tlFilter, setTlFilter] = useState("all");
+  if (err) return <ErrorBox err={err} />;
+  if (!data) return <PageSkeleton />;
+  const { luminaire: l, state: s, latest, tests, faults, dispatches = [] } = data;
   const durations = tests.filter((t) => t.test_type === "duration").slice(0, 6).reverse();
   const functions = tests.filter((t) => t.test_type === "function").slice(0, 14).reverse();
   const openFaults = faults.filter((f) => f.status !== "closed");
 
-  const run = async (type) => { setBusy(type); setMsg(null); try { const r = await A.apiPost("/api/control/test", { luminaire_id: l.luminaire_id, test_type: type }); setMsg(`${type === "duration" ? "Duration" : "Function"} test ${r.note}`); } catch (e) { setMsg(e.message); } finally { setBusy(null); } };
-  const act = async (f, kind, note, action) => { await A.apiPost(`/api/faults/${kind}`, { luminaire_id: l.luminaire_id, opened_at: f.opened_at, note, action }); reload(); };
+  const run = async (type) => { setBusy(type); try { const r = await A.apiPost("/api/control/test", { luminaire_id: l.luminaire_id, test_type: type }); toast(`${type === "duration" ? "Duration" : "Function"} test ${r.note}`); } catch (e) { toast(e.message, "alert"); } finally { setBusy(null); } };
+  const act = async (f, kind, note, action) => { await A.apiPost(`/api/faults/${kind}`, { luminaire_id: l.luminaire_id, opened_at: f.opened_at, note, action }); toast(kind === "ack" ? "Fault acknowledged." : "Fault closed and recorded."); reload(); };
+
+  const timeline = [
+    ...tests.map((t) => ({ at: t.finished_at || t.started_at, kind: "test", tone: t.result === "fail" ? "alert" : t.result === "pass-marginal" || t.result === "incomplete" ? "warn" : "ok", title: `${t.test_type === "duration" ? "Duration" : "Function"} test — ${({ pass: "pass", "pass-marginal": "pass, marginal", fail: "fail", incomplete: "incomplete" })[t.result] || t.result}`,
+      detail: t.test_type === "duration" && t.achieved_min != null ? `${t.achieved_min} min of ${t.rated_min} rated${t.reason && !/^achieved/.test(t.reason) ? ` · ${t.reason}` : ""}` : t.reason || "", meta: `${t.source}${t.entered_by ? ` · ${t.entered_by}` : ""}` })),
+    ...faults.map((f) => ({ at: f.opened_at, kind: "fault", tone: f.status === "closed" ? "idle" : f.severity, title: f.summary, detail: f.status === "closed" ? `Closed ${A.fmtDateTime(f.closed_at)} by ${f.closed_by}${f.remedial_action ? ` — ${f.remedial_action}` : ""}` : f.status === "acknowledged" ? `Acknowledged by ${f.acked_by}${f.ack_note ? ` — ${f.ack_note}` : ""}` : "Open", meta: `${f.subsystem} fault` })),
+    ...dispatches.map((d) => ({ at: d.at, kind: "dispatch", tone: "cyan", title: `${d.test_type === "duration" ? "Duration" : "Function"} test requested`, detail: d.occurrence === "manual" ? `By ${d.by}` : `Job ${d.job_id || d.occurrence}`, meta: "downlink" })),
+  ].filter((x) => tlFilter === "all" || x.kind === tlFilter).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 60);
 
   return (
     <div className="page">
@@ -400,12 +494,10 @@ export function Luminaire({ luminaireId }) {
           </dl>
           <div className="control-buttons">
             <button className="btn" disabled={!!busy || !l.control_enabled} onClick={() => run("function")}>{busy === "function" ? "Sending…" : "Run function test"}</button>
-            <button className="btn ghost" disabled={!!busy || !l.control_enabled} onClick={() => run("duration")}>{busy === "duration" ? "Sending…" : "Run duration test"}</button>
             <a className="btn ghost" href={`#/luminaire/${l.luminaire_id}/job`}>Schedule a test</a>
             <button className="btn ghost" onClick={() => setManual((m) => !m)}>Add manual entry</button>
           </div>
-          {msg && <div className="muted small-note">{msg}</div>}
-          {manual && <ManualEntry luminaireId={l.luminaire_id} onDone={() => { setManual(false); reload(); }} />}
+          {manual && <ManualEntry luminaireId={l.luminaire_id} onDone={() => { setManual(false); toast("Manual entry recorded."); reload(); }} />}
         </Panel>
       </div>
 
@@ -414,31 +506,49 @@ export function Luminaire({ luminaireId }) {
           <div className="fn-strip">
             {functions.map((t, i) => <span key={i} className={`mcell ${t.result.startsWith("pass") ? "pass" : "fail"}`} title={`${A.fmtDate(t.finished_at)} — ${t.result}`} />)}
           </div>
-          <div className="muted small-note">Left to right, oldest to newest. Each cell is one automatic function test.</div>
+          <div className="muted small-note">Oldest to newest. Each cell is one automatic function test.</div>
         </Panel>
         <Panel title={`Faults${openFaults.length ? ` — ${openFaults.length} open` : ""}`}>
-          {faults.length === 0 && <div className="empty">No faults recorded for this fitting.</div>}
-          {faults.map((f) => <FaultRow key={f.opened_at} f={f} onAck={(n) => act(f, "ack", n)} onClose={(n, a) => act(f, "close", n, a)} />)}
+          {faults.length === 0 && <div className="empty good">No faults recorded for this fitting.</div>}
+          {faults.slice(0, 6).map((f) => <FaultRow key={f.opened_at} f={f} onAck={(n) => act(f, "ack", n)} onClose={(n, a) => act(f, "close", n, a)} />)}
         </Panel>
       </div>
 
-      <Panel title="Record" right={<span className="muted">tests and faults, newest first · exported to the logbook</span>}>
-        <table className="tbl">
-          <thead><tr><th>When</th><th>Record</th><th>Result</th><th>Detail</th><th>Source</th></tr></thead>
-          <tbody>
-            {[...tests.map((t) => ({ at: t.finished_at || t.started_at, kind: `${t.test_type} test`, result: t.result, detail: t.achieved_min != null && t.test_type === "duration" ? `${t.achieved_min} min of ${t.rated_min}` : t.reason || "", src: t.source + (t.entered_by ? ` · ${t.entered_by}` : "") })),
-              ...faults.map((f) => ({ at: f.opened_at, kind: `${f.subsystem} fault`, result: f.status, detail: f.summary + (f.remedial_action ? ` — ${f.remedial_action}` : ""), src: "automatic" }))]
-              .sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 40)
-              .map((r, i) => <tr key={i}><td className="muted nowrap">{A.fmtDateTime(r.at)}</td><td>{r.kind}</td><td className={r.result === "fail" ? "alert-text" : r.result === "pass-marginal" ? "warn-text" : ""}>{r.result}</td><td className="muted">{r.detail}</td><td className="muted">{r.src}</td></tr>)}
-          </tbody>
-        </table>
+      <Panel title="Record" right={<Chips value={tlFilter} onChange={setTlFilter} options={[{ id: "all", label: "All" }, { id: "test", label: "Tests" }, { id: "fault", label: "Faults" }, { id: "dispatch", label: "Requests" }]} />}>
+        <Timeline items={timeline} />
       </Panel>
 
       <Panel title="Raw events — last 30 days" right={<span className="muted">{ev.data?.events?.length ?? "…"} uplinks</span>}>
-        {ev.data && <table className="tbl mono-tbl"><tbody>
-          {ev.data.events.slice(0, 25).map((e, i) => <tr key={i}><td className="muted nowrap">{A.fmtDateTime(e.ts)}</td><td>{e.type}{e.test_type ? ` (${e.test_type})` : ""}</td><td className="muted">{e.battery_mv != null ? A.fmtMv(e.battery_mv) : ""}{e.test_duration_min != null ? ` · ${e.test_duration_min} min` : ""}{e.flags?.length ? ` · ${e.flags.join(", ")}` : ""}{e.rssi != null ? ` · ${e.rssi} dBm` : ""}</td></tr>)}
-        </tbody></table>}
+        {!ev.data ? <Skeleton lines={4} /> : (
+          <div className="scroll-x"><table className="tbl mono-tbl"><tbody>
+            {ev.data.events.slice(0, 25).map((e, i) => <tr key={i}><td className="muted nowrap">{A.fmtDateTime(e.ts)}</td><td>{e.type}{e.test_type ? ` (${e.test_type})` : ""}</td><td className="muted">{e.battery_mv != null ? A.fmtMv(e.battery_mv) : ""}{e.test_duration_min != null ? ` · ${e.test_duration_min} min` : ""}{e.flags?.length ? ` · ${e.flags.join(", ")}` : ""}{e.rssi != null ? ` · ${e.rssi} dBm` : ""}</td></tr>)}
+          </tbody></table></div>
+        )}
       </Panel>
+    </div>
+  );
+}
+
+function Timeline({ items }) {
+  if (!items.length) return <div className="empty">Nothing recorded yet.</div>;
+  let lastMonth = null;
+  return (
+    <div className="timeline">
+      {items.map((x, i) => {
+        const month = x.at ? new Date(x.at).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "";
+        const head = month !== lastMonth; lastMonth = month;
+        return (
+          <React.Fragment key={i}>
+            {head && <div className="tl-month">{month}</div>}
+            <div className={`tl-item ${x.tone}`}>
+              <div className="tl-dot" />
+              <div className="tl-when muted nowrap">{A.fmtDateTime(x.at)}</div>
+              <div className="tl-body"><div className="tl-title">{x.title}</div>{x.detail && <div className="tl-detail muted">{x.detail}</div>}</div>
+              <div className="tl-meta muted">{x.meta}</div>
+            </div>
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -496,15 +606,15 @@ function FaultRow({ f, onAck, onClose }) {
       <div className="fault-head">
         <Led status={f.status === "closed" ? "idle" : f.severity} />
         <div className="fault-title">{f.summary}</div>
-        <div className="muted">{A.fmtDateTime(f.opened_at)}</div>
+        <div className="muted nowrap">{A.fmtDateTime(f.opened_at)}</div>
         <span className={`chip ${f.status === "closed" ? "" : f.status === "acknowledged" ? "cyan" : f.severity === "alert" ? "alert" : "warn"}`}>{f.status}</span>
       </div>
       {f.ack_note && <div className="fault-note muted">Acknowledged by {f.acked_by} · {f.ack_note}</div>}
       {f.close_note && <div className="fault-note muted">Closed by {f.closed_by} · {f.close_note}{f.remedial_action ? ` · ${f.remedial_action}` : ""}</div>}
       {f.status !== "closed" && (
         <div className="fault-actions">
-          {!open && f.status === "open" && <button className="btn tiny ghost" onClick={() => { setOpen("ack"); }}>Acknowledge</button>}
-          {!open && <button className="btn tiny ghost" onClick={() => { setOpen("close"); }}>Close with action</button>}
+          {!open && f.status === "open" && <button className="btn tiny ghost" onClick={() => setOpen("ack")}>Acknowledge</button>}
+          {!open && <button className="btn tiny ghost" onClick={() => setOpen("close")}>Close with action</button>}
           {open && (
             <div className="fault-form">
               <input placeholder={open === "ack" ? "Note (optional)" : "What was done?"} value={note} onChange={(e) => setNote(e.target.value)} />
@@ -538,43 +648,92 @@ function ManualEntry({ luminaireId, onDone }) {
   );
 }
 
-/* ---------- Exceptions ---------- */
+/* ---------- Needs attention ---------- */
 
 export function Exceptions() {
   const { data, err, reload } = useApi("/api/exceptions");
-  const [filter, setFilter] = useState("all");
-  if (err) return <div className="loading">{err}</div>;
-  if (!data) return <div className="loading">Loading queue…</div>;
-  const items = data.exceptions.filter((e) => filter === "all" || e.state.status === filter);
-  const bySite = {};
-  for (const e of items) (bySite[e.site_name] ||= []).push(e);
+  const portfolio = useApi("/api/portfolio");
+  const toast = useToast();
+  const [sev, setSev] = useState("all");
+  const [sub, setSub] = useState("all");
+  const [siteId, setSiteId] = useState("all");
+  const [busy, setBusy] = useState(null);
+  if (err) return <ErrorBox err={err} />;
+  if (!data || !portfolio.data) return <PageSkeleton />;
+  const sitesById = Object.fromEntries(portfolio.data.sites.map((s) => [s.site_id, s]));
+  const { siteItems, fittingItems } = groupExceptions(data.exceptions, sitesById);
+
+  const subsystemOf = (e) => { const f = e.faults?.find((x) => x.status !== "closed" && x.subsystem !== "comms"); if (f) return f.subsystem; if (["fail", "pass-marginal"].includes(e.state.duration_test?.last?.result)) return "battery"; if (["overdue", "due", "never"].includes(e.state.function_test?.status) || ["overdue", "never"].includes(e.state.duration_test?.status)) return "test"; return e.state.comms === "stale" ? "comms" : "other"; };
+  const items = fittingItems.filter((e) => (sev === "all" || e.state.status === sev) && (sub === "all" || subsystemOf(e) === sub) && (siteId === "all" || e.site_id === siteId));
+  const subCounts = fittingItems.reduce((a, e) => { const k = subsystemOf(e); a[k] = (a[k] || 0) + 1; return a; }, {});
+  const bySite = {}; for (const e of items) (bySite[e.site_name] ||= []).push(e);
+
+  const ackQuick = async (e) => {
+    const f = (e.faults || []).find((x) => x.status === "open");
+    if (!f) { go(`/luminaire/${e.luminaire_id}`); return; }
+    setBusy(e.luminaire_id);
+    try { await A.apiPost("/api/faults/ack", { luminaire_id: e.luminaire_id, opened_at: f.opened_at, note: "" }); toast(`${e.name} acknowledged.`); reload(); } catch (x) { toast(x.message, "alert"); } finally { setBusy(null); }
+  };
+  const ackSite = async (s) => {
+    setBusy(s.site_id);
+    try { let n = 0; for (const f of s.comms_faults) { await A.apiPost("/api/faults/ack", { luminaire_id: f.luminaire_id, opened_at: f.opened_at, note: "Site offline — connectivity" }); n++; } toast(`${s.site_name}: ${n} comms faults acknowledged as one site outage.`); reload(); }
+    catch (x) { toast(x.message, "alert"); } finally { setBusy(null); }
+  };
+
   return (
     <div className="page">
       <div className="page-head">
-        <div><a className="back" href="#/">Estate</a><h1 className="h1">Needs attention</h1><div className="sub muted">{data.count} fittings across {Object.keys(bySite).length} sites. Work the reds first.</div></div>
-        <div className="seg">
-          {["all", "alert", "warn"].map((f) => <button key={f} className={filter === f ? "on" : ""} onClick={() => setFilter(f)}>{f === "all" ? "All" : f === "alert" ? "Action needed" : "Attention"}</button>)}
-        </div>
+        <div><a className="back" href="#/">Estate</a><h1 className="h1">Needs attention</h1><div className="sub muted">{siteItems.length ? `${siteItems.length} site${siteItems.length > 1 ? "s" : ""} offline · ` : ""}{fittingItems.length} fittings across {new Set(fittingItems.map((e) => e.site_id)).size} sites. Work the reds first.</div></div>
       </div>
-      {!items.length && <div className="empty">Queue is clear.</div>}
+
+      {siteItems.length > 0 && (
+        <Panel title="Sites offline" right={<span className="muted">connectivity, not luminaires</span>}>
+          <div className="offline-list">
+            {siteItems.map((s) => (
+              <div key={s.site_id} className="offline">
+                <Led status="warn" />
+                <div className="offline-body">
+                  <div><strong>{s.site_name}</strong> <span className="muted">{s.silent} of {s.total} fittings silent since {A.fmtDateTime(s.since)}</span></div>
+                  <div className="muted small-note">Check the gateway and backhaul. The fittings keep testing themselves and will report the results when the link returns.</div>
+                </div>
+                <div className="offline-actions">
+                  <a className="btn tiny ghost" href={`#/site/${s.site_id}`}>Open site</a>
+                  {s.comms_faults.length > 0 && <button className="btn tiny ghost" disabled={busy === s.site_id} onClick={() => ackSite(s)}>{busy === s.site_id ? "…" : `Acknowledge all ${s.comms_faults.length}`}</button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      <div className="toolbar">
+        <Chips value={sev} onChange={setSev} options={[{ id: "all", label: "All", count: fittingItems.length }, { id: "alert", label: "Action needed", count: fittingItems.filter((e) => e.state.status === "alert").length, tone: "alert" }, { id: "warn", label: "Attention", count: fittingItems.filter((e) => e.state.status === "warn").length, tone: "warn" }]} />
+        <Chips value={sub} onChange={setSub} options={[{ id: "all", label: "Any cause" }, ...["lamp", "battery", "charger", "test", "comms", "mains", "control"].filter((k) => subCounts[k]).map((k) => ({ id: k, label: ({ test: "Overdue / failed test", comms: "Silent" })[k] || k[0].toUpperCase() + k.slice(1), count: subCounts[k] }))]} />
+        <select className="select" value={siteId} onChange={(e) => setSiteId(e.target.value)} aria-label="Site"><option value="all">All sites</option>{portfolio.data.sites.map((s) => <option key={s.site_id} value={s.site_id}>{s.name}</option>)}</select>
+      </div>
+
+      {!items.length && <div className="empty good">Queue is clear for this filter.</div>}
       {Object.entries(bySite).map(([site, list]) => (
         <Panel key={site} title={site} right={<span className="muted">{list.length}</span>}>
-          <table className="tbl">
-            <thead><tr><th className="led-col"></th><th>Fitting</th><th>Location</th><th>Why</th><th>Function</th><th>Duration</th><th>Last report</th></tr></thead>
-            <tbody>
-              {list.map((e) => (
-                <tr key={e.luminaire_id} className="rowlink" onClick={() => go(`/luminaire/${e.luminaire_id}`)}>
-                  <td className="led-col"><Led status={e.state.status} /></td>
-                  <td><strong>{e.name}</strong></td>
-                  <td className="muted">{e.location}</td>
-                  <td>{whyText(e)}</td>
-                  <td className={cls(e.state.function_test?.status)}>{A.dueText(e.state.function_test)}</td>
-                  <td className={cls(e.state.duration_test?.status, e.state.duration_test?.last?.result)}>{A.dueText(e.state.duration_test)}</td>
-                  <td className={e.state.comms === "stale" ? "warn-text" : "muted"}>{A.ago(e.state.last_seen)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="scroll-x">
+            <table className="tbl">
+              <thead><tr><th className="led-col"></th><th>Fitting</th><th>Location</th><th>Why</th><th>Function</th><th>Duration</th><th>Last report</th><th></th></tr></thead>
+              <tbody>
+                {list.map((e) => (
+                  <tr key={e.luminaire_id} className="rowlink" onClick={() => go(`/luminaire/${e.luminaire_id}`)}>
+                    <td className="led-col"><Led status={e.state.status} /></td>
+                    <td><strong>{e.name}</strong></td>
+                    <td className="muted">{e.location}</td>
+                    <td>{e.why}</td>
+                    <td className={cls(e.state.function_test?.status)}>{A.dueText(e.state.function_test)}</td>
+                    <td className={cls(e.state.duration_test?.status, e.state.duration_test?.last?.result)}>{A.dueText(e.state.duration_test)}</td>
+                    <td className={e.state.comms === "stale" ? "warn-text nowrap" : "muted nowrap"}>{A.ago(e.state.last_seen)}</td>
+                    <td className="r" onClick={(ev) => ev.stopPropagation()}>{(e.faults || []).some((f) => f.status === "open") ? <button className="btn tiny ghost" disabled={busy === e.luminaire_id} onClick={() => ackQuick(e)}>Acknowledge</button> : <a className="btn tiny ghost" href={`#/luminaire/${e.luminaire_id}`}>Open</a>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Panel>
       ))}
     </div>
@@ -585,15 +744,17 @@ export function Exceptions() {
 
 export function Reports({ presetSite }) {
   const { data } = useApi("/api/portfolio");
+  const toast = useToast();
   const [siteId, setSiteId] = useState(presetSite || "");
   const [from, setFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
   useEffect(() => { if (data && !siteId) setSiteId(data.sites[0]?.site_id || ""); }, [data]);
-  const site = data?.sites.find((s) => s.site_id === siteId);
+  if (!data) return <PageSkeleton />;
+  const site = data.sites.find((s) => s.site_id === siteId);
   const fetchCsv = async () => { setBusy(true); try { const csv = await A.api(`/api/reports/logbook?site_id=${siteId}&from=${from}&to=${to}`); setPreview(typeof csv === "string" ? csv : ""); return csv; } finally { setBusy(false); } };
-  const download = async () => { const csv = await fetchCsv(); const blob = new Blob([csv], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `beacon-logbook-${siteId}-${from}-${to}.csv`; a.click(); };
+  const download = async () => { const csv = await fetchCsv(); const blob = new Blob([csv], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `clearway-logbook-${siteId}-${from}-${to}.csv`; a.click(); toast("Logbook downloaded."); };
   const rows = preview ? preview.split("\r\n").filter(Boolean).map((r) => r.split(",")) : null;
   return (
     <div className="page">
@@ -601,7 +762,7 @@ export function Reports({ presetSite }) {
       <div className="grid two">
         <Panel title="Emergency lighting logbook">
           <div className="form-row">
-            <label>Site<select value={siteId} onChange={(e) => setSiteId(e.target.value)}>{(data?.sites || []).map((s) => <option key={s.site_id} value={s.site_id}>{s.name}</option>)}</select></label>
+            <label>Site<select value={siteId} onChange={(e) => setSiteId(e.target.value)}>{data.sites.map((s) => <option key={s.site_id} value={s.site_id}>{s.name}</option>)}</select></label>
             <label>From<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
             <label>To<input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
           </div>

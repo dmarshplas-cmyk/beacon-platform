@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { loadConfig, isAuthed, signOut, getConfig } from "./api.js";
 import { Login } from "./auth.jsx";
+import { ToastProvider } from "./ui.jsx";
 import { Estate, Site, ScheduleJob, Jobs, Luminaire, Exceptions, Reports } from "./views.jsx";
 
 function parseHash() {
@@ -19,6 +20,8 @@ function parseHash() {
   if (parts[0] === "reports") return { view: "reports", site: q.get("site") };
   return { view: "estate" };
 }
+
+const NAV = [["estate", "#/", "Estate"], ["exceptions", "#/exceptions", "Needs attention"], ["jobs", "#/jobs", "Manual tests"], ["reports", "#/reports", "Logbook"]];
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -40,33 +43,32 @@ export default function App() {
   if (!authed) return <Login />;
   const cfg = getConfig() || {};
   const product = cfg.brand || "Clearway";
-  const nav = (v) => (route.view === v ? "navlink on" : "navlink");
+  const active = (v) => route.view === v || (v === "estate" && ["site", "luminaire"].includes(route.view)) || (v === "jobs" && route.view === "job");
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <a className="brand" href="#/">
-          <img className="logo" src="./nxzen-wordmark.png" alt="nXzen" />
-          <span className="product">{product}</span>
-        </a>
-        <nav className="nav">
-          <a className={nav("estate")} href="#/">Estate</a>
-          <a className={nav("exceptions")} href="#/exceptions">Needs attention</a>
-          <a className={nav("jobs")} href="#/jobs">Manual tests</a>
-          <a className={nav("reports")} href="#/reports">Logbook</a>
-        </nav>
-        <span className="window-label muted">{cfg.demo ? "Demo estate — simulated data" : "BS 5266-1 · automatic testing to BS EN 62034"}</span>
-        {!cfg.demo && <button className="signout" onClick={signOut}>Sign out</button>}
-      </header>
-      <main className="main">
-        {route.view === "estate" && <Estate />}
-        {route.view === "site" && <Site siteId={route.siteId} />}
-        {route.view === "job" && <ScheduleJob key={route.luminaireId || route.siteId} siteId={route.siteId} luminaireId={route.luminaireId} />}
-        {route.view === "jobs" && <Jobs />}
-        {route.view === "luminaire" && <Luminaire luminaireId={route.luminaireId} />}
-        {route.view === "exceptions" && <Exceptions />}
-        {route.view === "reports" && <Reports presetSite={route.site} />}
-      </main>
-    </div>
+    <ToastProvider>
+      <div className="shell">
+        <header className="topbar">
+          <a className="brand" href="#/">
+            <img className="logo" src="./nxzen-wordmark.png" alt="nXzen" />
+            <span className="product">{product}</span>
+          </a>
+          <nav className="nav" aria-label="Main">
+            {NAV.map(([id, href, label]) => <a key={id} className={`navlink ${active(id) ? "on" : ""}`} href={href}>{label}</a>)}
+          </nav>
+          <span className="window-label muted">{cfg.demo ? "Demo estate — simulated data" : "BS 5266-1 · automatic testing to BS EN 62034"}</span>
+          {!cfg.demo && <button className="btn tiny ghost signout" onClick={signOut}>Sign out</button>}
+        </header>
+        <main className="main">
+          {route.view === "estate" && <Estate />}
+          {route.view === "site" && <Site siteId={route.siteId} />}
+          {route.view === "job" && <ScheduleJob key={route.luminaireId || route.siteId} siteId={route.siteId} luminaireId={route.luminaireId} />}
+          {route.view === "jobs" && <Jobs />}
+          {route.view === "luminaire" && <Luminaire luminaireId={route.luminaireId} />}
+          {route.view === "exceptions" && <Exceptions />}
+          {route.view === "reports" && <Reports presetSite={route.site} />}
+        </main>
+      </div>
+    </ToastProvider>
   );
 }

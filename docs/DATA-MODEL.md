@@ -39,7 +39,7 @@
   "status": "closed", "opened_at": "…", "acked_at": "…", "acked_by": "d.marsh", "ack_note": "Battery ordered",
   "closed_at": "…", "closed_by": "j.pryce", "close_note": "New pack fitted, duration test re-run", "remedial_action": "Battery replaced" }
 
-{ "pk": "JOBS", "sk": "2026-11-02T01:00:00.000Z#a1b2c3d4", "entity_type": "job", "job_id": "a1b2c3d4", "tenant_id": "cambrian",
+{ "pk": "JOBS", "sk": "JOB#2026-11-02T01:00:00.000Z#a1b2c3d4", "entity_type": "job", "job_id": "a1b2c3d4", "tenant_id": "cambrian",
   "test_type": "duration", "scope": { "site_id": "dolafon-house" }, "scope_name": "Dolafon House", "run_at": "2026-11-02T01:00:00.000Z",
   "stagger_window_min": 60, "note": "Re-test after battery swaps", "status": "pending", "created_by": "d.marsh", "created_at": "…",
   "dispatched": [], "held": [], "skipped": [] }   // status: pending → running → done | cancelled

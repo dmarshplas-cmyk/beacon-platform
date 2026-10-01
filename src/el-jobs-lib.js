@@ -8,7 +8,7 @@
  * gateway outage.
  *
  * JOB item (el_records):
- *   pk "JOBS", sk "<run_at ISO>#<job_id>", entity_type "job"
+ *   pk "JOBS", sk "JOB#<run_at ISO>#<job_id>", entity_type "job"
  *   { job_id, tenant_id, scope: { site_id } | { luminaire_id }, test_type,
  *     run_at, stagger_window_min, status: pending|running|done|cancelled,
  *     created_by, created_at, note, dispatched: [luminaire_id…], held: [{luminaire_id, reason}], skipped: [...] }

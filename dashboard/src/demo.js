@@ -36,6 +36,7 @@ const STORY = {
   "bryn-awel": { marginal: 3, mains: 1 },
   "llys-hafan": { failDur: 1, batt: 2 },
   "hafod-office": { stale: 2 },
+  "glan-yr-afon": { stale: 11 },        // whole block silent — gateway down
   "cae-glas": { neverDur: 1 },
 };
 

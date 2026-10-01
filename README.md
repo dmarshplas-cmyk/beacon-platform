@@ -25,7 +25,7 @@ tied to a fitting.
 | `src/el-api-handler.js` | Tenant-scoped API: portfolio, site, luminaire, exceptions, ack/close, manual entry, run-now, jobs, CSV logbook. |
 | `src/dynamodb.js` `api-lib.js` `control-lib.js` `import-lib.js` | Byte-identical to Pulse. Keep them that way. |
 | `infra/template.yaml` | Pulse stack renamed: `el_config` / `el_events` / `el_records`, `el-ingest` / `el-api` / `el-compliance` / `el-scheduler`, Cognito `el-users`. |
-| `dashboard/` | Vite/React console: Estate (luminaire wall), Site, Luminaire, Needs attention, Manual tests, Logbook. Demo mode built in. |
+| `dashboard/` | Vite/React console: Estate (wall / map / list, filters, search), Site, Luminaire (timeline), Needs attention (site-offline grouping, inline ack), Manual tests, Logbook. Demo mode built in. |
 | `scripts/` | `seed-demo-estate.py`, `send-test-uplink.py`, `register-source.py`, `create-user.py`, `create-api-key.py`, `build-demo.mjs`. |
 
 ## Run the tests
@@ -74,7 +74,7 @@ luminaire items to `el_config` (see `docs/DATA-MODEL.md`).
 - **el_events** — every decoded uplink. pk `circuit_id` (= luminaire_id, kept so `dynamodb.js` is untouched), sk `ts`. 400-day TTL.
 - **el_records** — append-only, no TTL:
   `LUMINAIRE#id / TEST#ts · FAULT#ts · DISPATCH#ts · LATEST · STATE`
-  `SITE#id / DAY#yyyy-mm-dd · STATE`   `TENANT#id / STATE`   `JOBS / <run_at>#<id>`
+  `SITE#id / DAY#yyyy-mm-dd · STATE`   `TENANT#id / STATE`   `JOBS / JOB#<run_at>#<id>`
 
 ## Before a paying customer
 

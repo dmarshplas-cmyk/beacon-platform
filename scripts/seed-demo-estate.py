@@ -8,6 +8,8 @@ and so el-compliance has real records to roll up. Same estate as the
 console's demo mode: fictional housing provider, deliberate stories.
 
   python3 scripts/seed-demo-estate.py            # seed
+  python3 scripts/seed-demo-estate.py --refresh  # before a demo: bring "last seen" up to now, close
+                                                 #   the comms faults the daily run opened, keep stories
   python3 scripts/seed-demo-estate.py --wipe     # remove everything tagged demo
 
 Then run the compliance rollup once:
@@ -138,9 +140,31 @@ def build(site, i, story):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--wipe", action="store_true")
+    ap.add_argument("--refresh", action="store_true")
     args = ap.parse_args()
     ddb = boto3.resource("dynamodb", region_name=REGION)
     cfg, rec = ddb.Table(CONFIG), ddb.Table(RECORDS)
+
+    if args.refresh:
+        # Luminaires the demo deliberately leaves silent keep their old timestamp; everything else reports "now".
+        silent = set()
+        for sid, story in STORY.items():
+            for i in range(1, 1 + story.get("stale", 0)):
+                silent.add(f"{sid}-el-{i+1:02d}")
+        latest, comms_closed = 0, 0
+        scan = {"FilterExpression": "demo = :d", "ExpressionAttributeValues": {":d": True}}
+        while True:
+            r = rec.scan(**scan)
+            with rec.batch_writer() as bw:
+                for it in r["Items"]:
+                    if it["sk"] == "LATEST" and it["luminaire_id"] not in silent:
+                        it["ts"] = iso(NOW - timedelta(hours=rng.randrange(20))); bw.put_item(Item=it); latest += 1
+                    elif it["sk"].startswith("FAULT#") and it.get("subsystem") == "comms" and it.get("status") == "open" and it["luminaire_id"] not in silent:
+                        it.update({"status": "closed", "closed_at": iso(NOW), "closed_by": "device", "close_note": "Luminaire reporting again"}); bw.put_item(Item=it); comms_closed += 1
+            if "LastEvaluatedKey" not in r:
+                break
+            scan["ExclusiveStartKey"] = r["LastEvaluatedKey"]
+        print(f"Refreshed {latest} luminaires, closed {comms_closed} comms faults. Now run el-compliance once."); return
 
     if args.wipe:
         n = 0

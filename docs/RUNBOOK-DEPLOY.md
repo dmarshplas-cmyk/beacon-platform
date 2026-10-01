@@ -71,6 +71,14 @@ aws dynamodb get-item --table-name el_records --region eu-west-1 \
   --query 'Item.[compliant_pct,overdue,failed,open_faults,status,month_grid]'
 ```
 
+Seed data doesn't send uplinks, so after ~36 h the daily run will (correctly)
+mark every fitting silent. Before a demo:
+
+```bash
+python3 scripts/seed-demo-estate.py --refresh
+aws lambda invoke --function-name el-compliance --payload '{}' --cli-binary-format raw-in-base64-out --region eu-west-1 out.json
+```
+
 `scripts/seed-demo-estate.py --wipe` removes every item tagged `demo: true`
 when you move to a real customer.
 
