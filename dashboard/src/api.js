@@ -220,7 +220,8 @@ export async function api(path) {
     throw new Error("Session expired — sign in again");
   }
   if (!res.ok) throw new Error(`API ${res.status} on ${path}`);
-  return res.json();
+  const type = res.headers.get("content-type") || "";
+  return /json/i.test(type) ? res.json() : res.text();   // logbook export is text/csv
 }
 
 /* ---------- small formatters ---------- */
