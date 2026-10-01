@@ -98,7 +98,7 @@ exports.handler = async (event = {}) => {
           db.getRollup(recordsTable, `SITE#${site.site_id}`, "STATE"),
           Promise.all(lums.map((l) => db.getRollup(recordsTable, `LUMINAIRE#${l.luminaire_id}`, "STATE"))),
           Promise.all(lums.map((l) => db.getRollup(recordsTable, `LUMINAIRE#${l.luminaire_id}`, "LATEST"))),
-          db.queryByPrefix(recordsTable, "JOBS", "", { limit: 200, desc: true }),
+          db.queryByPrefix(recordsTable, "JOBS", "JOB#", { limit: 200, desc: true }),
         ]);
         const siteJobs = jobs.filter((j) => j.scope?.site_id === site.site_id || lums.some((l) => l.luminaire_id === j.scope?.luminaire_id)).map(publicItem);
         return respond(200, { site: publicItem(site), state: publicItem(state || {}), jobs: siteJobs,
@@ -110,7 +110,7 @@ exports.handler = async (event = {}) => {
         return respond(200, { site_id: site.site_id, days: days.map(publicItem) });
       }
       case "jobs": {
-        const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "", { limit: 300, desc: true })).filter((j) => allowed(tenant, j.tenant_id)).map(publicItem);
+        const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "JOB#", { limit: 300, desc: true })).filter((j) => allowed(tenant, j.tenant_id)).map(publicItem);
         return respond(200, { jobs });
       }
       case "job_create": {
@@ -120,14 +120,14 @@ exports.handler = async (event = {}) => {
         const scopeOk = v.job.scope.site_id ? siteOk(v.job.scope.site_id) : lumOk(v.job.scope.luminaire_id);
         if (!scopeOk) return respond(404, { error: "scope not found" });
         const job_id = crypto.randomUUID().slice(0, 8);
-        const item = { pk: "JOBS", sk: `${v.job.run_at}#${job_id}`, entity_type: "job", job_id, tenant_id: scopeOk.tenant_id, ...v.job,
+        const item = { pk: "JOBS", sk: `JOB#${v.job.run_at}#${job_id}`, entity_type: "job", job_id, tenant_id: scopeOk.tenant_id, ...v.job,
           scope_name: scopeOk.name, status: "pending", created_by: who, created_at: new Date().toISOString(), dispatched: [], held: [], skipped: [] };
         await db.putRollup(recordsTable, item);
         return respond(200, { job: publicItem(item) });
       }
       case "job_cancel": {
         const b = parseBody(event);
-        const jobs = await db.queryByPrefix(recordsTable, "JOBS", "", { limit: 300, desc: true });
+        const jobs = await db.queryByPrefix(recordsTable, "JOBS", "JOB#", { limit: 300, desc: true });
         const job = jobs.find((j) => j.job_id === String(b.job_id || "") && allowed(tenant, j.tenant_id));
         if (!job) return respond(404, { error: "job not found" });
         if (job.status === "done" || job.status === "cancelled") return respond(400, { error: `job already ${job.status}` });

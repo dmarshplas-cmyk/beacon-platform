@@ -36,7 +36,7 @@ async function dispatchOne(lum, testType, dlApps, configTable, recordsTable, job
 exports.handler = async () => {
   const configTable = process.env.CONFIG_TABLE, recordsTable = process.env.RECORDS_TABLE;
   const now = Date.now();
-  const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "", { limit: 500, desc: false })).filter((j) => j.status === "pending" || j.status === "running");
+  const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "JOB#", { limit: 500, desc: false })).filter((j) => j.status === "pending" || j.status === "running");
   const due = jobs.filter((j) => Date.parse(j.run_at) <= now);
   const results = { jobs: jobs.length, due: due.length, sent: 0, held: 0, skipped: 0, failed: 0, closed: 0 };
   if (!due.length) { log("idle", results); return results; }
