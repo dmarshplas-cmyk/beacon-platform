@@ -152,7 +152,7 @@ def main():
             for i in range(1, 1 + story.get("stale", 0)):
                 silent.add(f"{sid}-el-{i+1:02d}")
         latest, comms_closed = 0, 0
-        scan = {"FilterExpression": "demo = :d", "ExpressionAttributeValues": {":d": True}}
+        scan = {"FilterExpression": "demo = :d OR subsystem = :c", "ExpressionAttributeValues": {":d": True, ":c": "comms"}}
         while True:
             r = rec.scan(**scan)
             with rec.batch_writer() as bw:

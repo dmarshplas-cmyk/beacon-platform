@@ -66,6 +66,7 @@ exports.handler = async (event = {}) => {
         state.open_faults += 1;
       } else if (state.comms === "ok" && commsOpen) {
         await db.putRollup(recordsTable, { ...commsOpen, status: "closed", closed_at: new Date(nowMs).toISOString(), closed_by: "device", close_note: "Luminaire reporting again" });
+        Object.assign(state, rules.luminaireState(lum, latest, tests, faults.filter((f) => f !== commsOpen), nowMs)); // recompute without it
       }
 
       await db.putRollup(recordsTable, { pk, sk: "STATE", entity_type: "state", tenant_id: lum.tenant_id, site_id: lum.site_id, name: lum.name, location: lum.location, ...state, computed_at: new Date(nowMs).toISOString() });
