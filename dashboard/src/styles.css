@@ -495,3 +495,76 @@ ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
   .search { min-width: 0; }
   .kpi-row { width: 100%; }
 }
+
+/* ======================================================================
+   Testing planner
+   ====================================================================== */
+.explain { font-size: 13px; line-height: 1.5; margin: 0 0 12px; max-width: 900px; }
+.ttag { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--line); color: var(--text); }
+.ttag.duration { color: var(--cyan); border-color: #27515c; }
+.ttag.function { color: var(--ok); border-color: #2f5a2a; }
+.linkbtn { background: none; border: none; color: var(--cyan); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.btn.danger { color: var(--alert); border-color: #5a2d30; }
+.self-end { align-self: flex-end; }
+input.override { flex: 1; min-width: 260px; }
+
+/* agenda */
+.agenda { display: grid; gap: 10px; }
+.agenda-day { display: grid; grid-template-columns: 64px 1fr; gap: 14px; align-items: start; }
+.agenda-day.today .agenda-date { border-color: var(--cyan); }
+.agenda-date { text-align: center; border: 1px solid var(--line-soft); border-radius: var(--r); padding: 6px 4px; background: var(--ink-0); }
+.agenda-dow { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--muted); text-transform: uppercase; }
+.agenda-dom { font-family: var(--mono); font-size: 22px; font-weight: 600; line-height: 1.1; }
+.agenda-mon { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.agenda-items { display: grid; gap: 6px; }
+.agenda-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--line-soft); border-left: 3px solid var(--line); border-radius: var(--r); padding: 8px 10px; background: var(--ink-0); font-size: 13px; }
+.agenda-item.job { border-left-color: var(--warn); }
+.agenda-item.schedule { border-left-color: var(--cyan); }
+.agenda-item.bad { border-left-color: var(--alert); }
+.agenda-time { font-family: var(--mono); font-size: 12px; min-width: 44px; }
+.agenda-scope { font-weight: 600; }
+.agenda-src { font-size: 12px; }
+.agenda-act { margin-left: auto; }
+.tag.alert { color: var(--alert); border-color: #5a2d30; }
+
+/* schedules */
+.sched-list { display: grid; gap: 10px; }
+.schedcard { border: 1px solid var(--line-soft); border-left: 3px solid var(--cyan); border-radius: var(--r); padding: 12px 14px; background: var(--ink-1); }
+.schedcard.paused { border-left-color: var(--line); opacity: .75; }
+.schedcard.bad { border-left-color: var(--alert); }
+.schedcard-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.schedcard-name { font-weight: 600; font-size: 14px; }
+.schedcard-head .chip { margin-left: auto; }
+.schedcard-body { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; font-size: 13px; }
+.nextdate { display: block; font-size: 12px; }
+.schedcard-meta { margin-left: auto; font-size: 11.5px; }
+.preview { font-size: 13px; padding: 8px 10px; border-radius: var(--r); background: var(--ink-0); border: 1px solid var(--line-soft); margin-bottom: 10px; }
+
+/* windows */
+.windows-grid { grid-template-columns: 340px 1fr; }
+.sitepick { display: grid; gap: 4px; max-height: 560px; overflow: auto; }
+.sitepick-row { display: flex; align-items: center; gap: 10px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: var(--r); padding: 7px 9px; color: var(--text); cursor: pointer; font-size: 13px; }
+.sitepick-row:hover { border-color: var(--line-soft); }
+.sitepick-row.on { background: var(--ink-0); border-color: var(--line); }
+.sitepick-name { flex: 1; }
+.sitepick.compact .sitepick-row { padding: 4px 8px; }
+.winglyph { width: 120px; height: 35px; flex: 0 0 auto; }
+.winglyph.small { width: 56px; height: 16px; }
+.winglyph rect { fill: var(--ink-2); }
+.winglyph rect.on { fill: var(--ok); }
+.winline { display: flex; align-items: center; gap: 10px; font-size: 12.5px; margin: 6px 0 4px; }
+.presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.winedit { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 12px; }
+.winedit .winglyph { width: 192px; height: 56px; margin-top: 4px; }
+.winedit-fields { flex: 1; }
+.daytoggles { display: flex; gap: 4px; margin-bottom: 8px; }
+.daytoggle { background: var(--ink-0); border: 1px solid var(--line-soft); color: var(--muted); border-radius: var(--r); padding: 6px 0; width: 44px; font-family: var(--mono); font-size: 11px; cursor: pointer; }
+.daytoggle.on { background: rgba(141,233,113,.12); border-color: #2f5a2a; color: var(--ok); }
+.blackouts { margin: 8px 0 10px; }
+.blackouts .eyebrow { display: flex; align-items: center; gap: 10px; }
+.form-row.blackout { align-items: flex-end; }
+.winline-site { margin: 0 0 8px; }
+
+/* plan */
+.plan-grid { grid-template-columns: 1fr 1fr; }
+@media (max-width: 1100px) { .windows-grid, .plan-grid, .schedcard-body { grid-template-columns: 1fr; } .winedit { flex-direction: column; } }

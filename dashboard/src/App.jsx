@@ -4,16 +4,17 @@ import React, { useEffect, useState } from "react";
 import { loadConfig, isAuthed, signOut, getConfig } from "./api.js";
 import { Login } from "./auth.jsx";
 import { ToastProvider } from "./ui.jsx";
-import { Estate, Site, ScheduleJob, Jobs, Luminaire, Exceptions, Reports } from "./views.jsx";
+import { Estate, Site, Luminaire, Exceptions, Reports } from "./views.jsx";
+import { Testing, LuminaireOneOff } from "./testing.jsx";
 
 function parseHash() {
   const raw = window.location.hash.replace(/^#\/?/, "");
   const [path, query] = raw.split("?");
   const parts = path.split("/").filter(Boolean);
   const q = new URLSearchParams(query || "");
-  if (parts[0] === "site" && parts[1] && parts[2] === "job") return { view: "job", siteId: parts[1] };
-  if (parts[0] === "luminaire" && parts[1] && parts[2] === "job") return { view: "job", luminaireId: parts[1] };
-  if (parts[0] === "jobs") return { view: "jobs" };
+  if (parts[0] === "site" && parts[1] && parts[2] === "job") return { view: "testing", tab: "oneoff", site: parts[1] };
+  if (parts[0] === "luminaire" && parts[1] && parts[2] === "job") return { view: "lumjob", luminaireId: parts[1] };
+  if (parts[0] === "testing" || parts[0] === "jobs") return { view: "testing", tab: parts[1] || q.get("tab") || "agenda", site: q.get("site") };
   if (parts[0] === "site" && parts[1]) return { view: "site", siteId: parts[1] };
   if (parts[0] === "luminaire" && parts[1]) return { view: "luminaire", luminaireId: parts[1] };
   if (parts[0] === "exceptions") return { view: "exceptions" };
@@ -21,7 +22,7 @@ function parseHash() {
   return { view: "estate" };
 }
 
-const NAV = [["estate", "#/", "Estate"], ["exceptions", "#/exceptions", "Needs attention"], ["jobs", "#/jobs", "Manual tests"], ["reports", "#/reports", "Logbook"]];
+const NAV = [["estate", "#/", "Estate"], ["exceptions", "#/exceptions", "Needs attention"], ["testing", "#/testing", "Testing"], ["reports", "#/reports", "Logbook"]];
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -43,7 +44,7 @@ export default function App() {
   if (!authed) return <Login />;
   const cfg = getConfig() || {};
   const product = cfg.brand || "Clearway";
-  const active = (v) => route.view === v || (v === "estate" && ["site", "luminaire"].includes(route.view)) || (v === "jobs" && route.view === "job");
+  const active = (v) => route.view === v || (v === "estate" && ["site", "luminaire"].includes(route.view)) || (v === "testing" && route.view === "lumjob");
 
   return (
     <ToastProvider>
@@ -62,8 +63,8 @@ export default function App() {
         <main className="main">
           {route.view === "estate" && <Estate />}
           {route.view === "site" && <Site siteId={route.siteId} />}
-          {route.view === "job" && <ScheduleJob key={route.luminaireId || route.siteId} siteId={route.siteId} luminaireId={route.luminaireId} />}
-          {route.view === "jobs" && <Jobs />}
+          {route.view === "testing" && <Testing key={`${route.tab}-${route.site || ""}`} tab={route.tab} presetSite={route.site} />}
+          {route.view === "lumjob" && <LuminaireOneOff key={route.luminaireId} luminaireId={route.luminaireId} />}
           {route.view === "luminaire" && <Luminaire luminaireId={route.luminaireId} />}
           {route.view === "exceptions" && <Exceptions />}
           {route.view === "reports" && <Reports presetSite={route.site} />}

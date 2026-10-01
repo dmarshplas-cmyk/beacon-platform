@@ -204,7 +204,7 @@ export async function apiPost(path, body) {
     throw new Error("Session expired — sign in again");
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `API ${res.status} on ${path}`);
+  if (!res.ok) { const err = new Error(data.error || `API ${res.status} on ${path}`); err.detail = data; throw err; }
   return data;
 }
 
@@ -260,6 +260,7 @@ export function siteStatus(latest) {
 /* ---------- Clearway formatters ---------- */
 export const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 export const fmtDateTime = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
+export const fmtDateTimeY = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 export const fmtMin = (m) => (m === null || m === undefined ? "—" : m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`);
 export const fmtMv = (mv) => (mv === null || mv === undefined ? "—" : `${(mv / 1000).toFixed(2)} V`);
 export const dueText = (d) => {

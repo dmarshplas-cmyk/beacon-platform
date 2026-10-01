@@ -15,8 +15,14 @@
  */
 
 const rules = require("./el-rules");
+const SW = require("./el-schedules-lib");
 
-function validateJob(input = {}, nowMs = Date.now()) {
+/**
+ * validateJob(input, nowMs, site) — `site` (with test_window, tz, rated) enables
+ * the window check. Outside the window → refused unless input.override_reason
+ * is given, which is recorded on the job.
+ */
+function validateJob(input = {}, nowMs = Date.now(), site = null) {
   const testType = ["function", "duration"].includes(input.test_type) ? input.test_type : null;
   if (!testType) return { ok: false, reason: "test_type must be function or duration" };
   const scope = input.scope || {};
@@ -26,13 +32,27 @@ function validateJob(input = {}, nowMs = Date.now()) {
   if (runAt < nowMs - 5 * 60000) return { ok: false, reason: "run_at is in the past" };
   if (runAt > nowMs + 400 * 86400000) return { ok: false, reason: "run_at is more than 400 days away" };
   const stagger = Math.max(0, Math.min(360, Number(input.stagger_window_min ?? 60) || 0));
-  return { ok: true, job: {
+  const job = {
     test_type: testType,
     scope: scope.luminaire_id ? { luminaire_id: String(scope.luminaire_id) } : { site_id: String(scope.site_id) },
     run_at: new Date(runAt).toISOString(),
     stagger_window_min: stagger,
     note: String(input.note || "").slice(0, 300),
-  } };
+  };
+  if (site?.test_window) {
+    const need = testType === "duration" ? (site.rated_minutes || 180) + stagger : stagger + 5;
+    const chk = SW.inWindow(site.test_window, runAt, site.tz);
+    const endChk = chk.ok ? SW.inWindow(site.test_window, runAt + need * 60000, site.tz) : chk;
+    if (!chk.ok || !endChk.ok) {
+      const reason = !chk.ok ? chk.reason : `test would run past the end of the testing window (${need} min needed)`;
+      if (!String(input.override_reason || "").trim()) {
+        const slot = SW.nextSlot(site.test_window, runAt, site.tz, need);
+        return { ok: false, reason: `Outside this site's testing window — ${reason}`, next_slot: slot ? new Date(slot).toISOString() : null };
+      }
+      job.window_override = String(input.override_reason).slice(0, 200);
+    }
+  }
+  return { ok: true, job };
 }
 
 /** Luminaires a job applies to. */

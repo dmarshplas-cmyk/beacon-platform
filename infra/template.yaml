@@ -369,6 +369,7 @@ Resources:
                   - dynamodb:Scan
                   - dynamodb:GetItem
                   - dynamodb:PutItem
+                  - dynamodb:DeleteItem
                   - dynamodb:BatchWriteItem
                 Resource: !GetAtt ConfigTable.Arn
               - Effect: Allow
@@ -523,6 +524,7 @@ Resources:
                 Resource: !GetAtt ConfigTable.Arn
               - Effect: Allow
                 Action:
+                  - dynamodb:Query
                   - dynamodb:GetItem
                   - dynamodb:PutItem
                 Resource: !GetAtt RollupsTable.Arn

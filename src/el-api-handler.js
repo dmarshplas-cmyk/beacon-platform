@@ -13,6 +13,11 @@
  *  POST /api/tests/manual   { luminaire_id, test_type, result, at, note }   — manual logbook entry
  *  POST /api/control/test   { luminaire_id, test_type }                    — run a test now
  *  GET  /api/jobs                               scheduled/recent test jobs
+ *  GET  /api/schedules · POST /api/schedules · POST /api/schedules/{id}/update · POST /api/schedules/{id}/delete
+ *  GET  /api/sites/{id}/window · POST /api/sites/{id}/window     testing window (allowed days/hours, blackouts)
+ *  GET  /api/agenda?days=30                     upcoming: jobs + schedule occurrences, window-checked
+ *  POST /api/plan/annual { from, weeks, per_night, site_ids?, commit? }   spread duration tests; commit creates jobs
+ *  GET  /api/windows/presets
  *  POST /api/jobs           { test_type, scope: {site_id|luminaire_id}, run_at, stagger_window_min, note }
  *  POST /api/jobs/cancel    { job_id }
  *  GET  /api/reports/logbook?site_id=&from=&to=   CSV logbook (PDF renderer is a later drop)
@@ -21,10 +26,11 @@
  * ENV: CONFIG_TABLE, EVENTS_TABLE, RECORDS_TABLE
  */
 
-const db = require("./dynamodb");
+const db = { ...require("./dynamodb"), ...require("./dynamodb-ext") };
 const ctl = require("./control-lib");
 const codecs = require("./el-codec");
 const J = require("./el-jobs-lib");
+const SW = require("./el-schedules-lib");
 const crypto = require("crypto");
 const { tenantFromClaims, allowed, parseLimit, publicItem, toCsv } = require("./api-lib");
 
@@ -39,6 +45,15 @@ const ROUTES = [
   { m: "GET", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/?$/, kind: "site" },
   { m: "GET", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/days\/?$/, kind: "site_days" },
   { m: "GET", re: /^\/api\/jobs\/?$/, kind: "jobs" },
+  { m: "GET", re: /^\/api\/schedules\/?$/, kind: "schedules" },
+  { m: "POST", re: /^\/api\/schedules\/?$/, kind: "schedule_create" },
+  { m: "POST", re: /^\/api\/schedules\/([A-Za-z0-9_-]+)\/update\/?$/, kind: "schedule_update" },
+  { m: "POST", re: /^\/api\/schedules\/([A-Za-z0-9_-]+)\/delete\/?$/, kind: "schedule_delete" },
+  { m: "GET", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/window\/?$/, kind: "window_get" },
+  { m: "POST", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/window\/?$/, kind: "window_set" },
+  { m: "GET", re: /^\/api\/agenda\/?$/, kind: "agenda" },
+  { m: "POST", re: /^\/api\/plan\/annual\/?$/, kind: "plan_annual" },
+  { m: "GET", re: /^\/api\/windows\/presets\/?$/, kind: "presets" },
   { m: "POST", re: /^\/api\/jobs\/?$/, kind: "job_create" },
   { m: "POST", re: /^\/api\/jobs\/cancel\/?$/, kind: "job_cancel" },
   { m: "GET", re: /^\/api\/luminaires\/([A-Za-z0-9_-]+)\/?$/, kind: "luminaire" },
@@ -86,7 +101,7 @@ exports.handler = async (event = {}) => {
     switch (route.kind) {
       case "portfolio": {
         const states = await Promise.all(mySites.map((s) => db.getRollup(recordsTable, `SITE#${s.site_id}`, "STATE")));
-        const sites = mySites.map((s, i) => ({ ...publicItem(states[i] || {}), site_id: s.site_id, name: s.name, address: s.address || null, gps: s.gps || null, tz: s.tz }));
+        const sites = mySites.map((s, i) => ({ ...publicItem(states[i] || {}), site_id: s.site_id, name: s.name, kind: s.kind || null, address: s.address || null, gps: s.gps || null, tz: s.tz, test_window: s.test_window || null, luminaires: states[i]?.luminaires ?? cfg.lums.filter((l) => l.site_id === s.site_id).length }));
         const tenants = tenant === "*" ? [...new Set(mySites.map((s) => s.tenant_id))] : [tenant];
         const totals = (await Promise.all(tenants.map((t) => db.getRollup(recordsTable, `TENANT#${t}`, "STATE")))).filter(Boolean).map(publicItem);
         return respond(200, { tenant, totals, sites });
@@ -115,15 +130,88 @@ exports.handler = async (event = {}) => {
       }
       case "job_create": {
         const b = parseBody(event);
-        const v = J.validateJob(b);
-        if (!v.ok) return respond(400, { error: v.reason });
-        const scopeOk = v.job.scope.site_id ? siteOk(v.job.scope.site_id) : lumOk(v.job.scope.luminaire_id);
+        const pre = J.validateJob(b);
+        if (!pre.ok && !pre.next_slot) return respond(400, { error: pre.reason });
+        const scopeOk = pre.job?.scope.site_id ? siteOk(pre.job.scope.site_id) : lumOk(String(b.scope?.luminaire_id || ""));
         if (!scopeOk) return respond(404, { error: "scope not found" });
+        const siteForWindow = scopeOk.entity_type === "site" ? scopeOk : siteOk(scopeOk.site_id);
+        const v = J.validateJob(b, Date.now(), siteForWindow ? { ...siteForWindow, rated_minutes: scopeOk.rated_minutes } : null);
+        if (!v.ok) return respond(400, { error: v.reason, next_slot: v.next_slot || null });
         const job_id = crypto.randomUUID().slice(0, 8);
         const item = { pk: "JOBS", sk: `JOB#${v.job.run_at}#${job_id}`, entity_type: "job", job_id, tenant_id: scopeOk.tenant_id, ...v.job,
           scope_name: scopeOk.name, status: "pending", created_by: who, created_at: new Date().toISOString(), dispatched: [], held: [], skipped: [] };
         await db.putRollup(recordsTable, item);
         return respond(200, { job: publicItem(item) });
+      }
+      case "schedules": {
+        const all = (await db.scanConfig(configTable, "schedule")).filter((x) => allowed(tenant, x.tenant_id));
+        const out = all.map((x) => { const site = x.scope?.site_id ? siteOk(x.scope.site_id) : siteOk(cfg.lums.find((l) => l.luminaire_id === x.scope?.luminaire_id)?.site_id); return { ...publicItem(x), description: SW.describe(x.recurrence, x.time), next: SW.occurrences(x, Date.now(), 3).map((o) => new Date(o.at).toISOString()), window_check: site?.test_window ? SW.scheduleWindowCheck(x, site.test_window) : { ok: true, problems: [] } }; });
+        return respond(200, { schedules: out });
+      }
+      case "schedule_create": case "schedule_update": {
+        const b = parseBody(event);
+        let existing = null;
+        if (route.kind === "schedule_update") { existing = (await db.scanConfig(configTable, "schedule")).find((x) => x.schedule_id === route.id && allowed(tenant, x.tenant_id)); if (!existing) return respond(404, { error: "schedule not found" }); }
+        const v = SW.validateSchedule({ ...(existing || {}), ...b, scope: b.scope || existing?.scope });
+        if (!v.ok) return respond(400, { error: v.reason });
+        const scopeOk = v.schedule.scope.site_id ? siteOk(v.schedule.scope.site_id) : lumOk(v.schedule.scope.luminaire_id);
+        if (!scopeOk) return respond(404, { error: "scope not found" });
+        const site = scopeOk.entity_type === "site" ? scopeOk : siteOk(scopeOk.site_id);
+        const schedule_id = existing?.schedule_id || crypto.randomUUID().slice(0, 8);
+        const check = site?.test_window ? SW.scheduleWindowCheck({ ...v.schedule, schedule_id }, site.test_window) : { ok: true, problems: [] };
+        if (!check.ok && !String(b.override_reason || "").trim()) return respond(400, { error: `Outside the site's testing window: ${check.problems[0]}`, problems: check.problems });
+        const item = { pk: `TENANT#${scopeOk.tenant_id}`, sk: `SCHEDULE#${schedule_id}`, entity_type: "schedule", schedule_id, tenant_id: scopeOk.tenant_id, scope_name: scopeOk.name, ...v.schedule,
+          tz: site?.tz || v.schedule.tz, window_override: !check.ok ? String(b.override_reason).slice(0, 200) : null,
+          created_by: existing?.created_by || who, created_at: existing?.created_at || new Date().toISOString(), updated_by: who, updated_at: new Date().toISOString(), last_materialised: existing?.last_materialised || null };
+        await db.putConfigItem(configTable, item); cache.at = 0;
+        return respond(200, { schedule: { ...publicItem(item), description: SW.describe(item.recurrence, item.time), next: SW.occurrences(item, Date.now(), 3).map((o) => new Date(o.at).toISOString()), window_check: check } });
+      }
+      case "schedule_delete": {
+        const existing = (await db.scanConfig(configTable, "schedule")).find((x) => x.schedule_id === route.id && allowed(tenant, x.tenant_id));
+        if (!existing) return respond(404, { error: "schedule not found" });
+        await db.deleteConfigItem(configTable, existing.pk, existing.sk); cache.at = 0;
+        return respond(200, { deleted: route.id });
+      }
+      case "window_get": {
+        const site = siteOk(route.id); if (!site) return respond(404, { error: "not found" });
+        return respond(200, { site_id: site.site_id, tz: site.tz, test_window: site.test_window || null, presets: SW.PRESETS });
+      }
+      case "window_set": {
+        const site = siteOk(route.id); if (!site) return respond(404, { error: "not found" });
+        const b = parseBody(event);
+        const item = await db.getConfigItem(configTable, site.pk, site.sk);
+        if (b.test_window === null) { delete item.test_window; await db.putConfigItem(configTable, item); cache.at = 0; return respond(200, { site_id: site.site_id, test_window: null }); }
+        const v = SW.validateWindow(b.test_window || {});
+        if (!v.ok) return respond(400, { error: v.reason });
+        await db.putConfigItem(configTable, { ...item, test_window: { ...v.window, updated_by: who, updated_at: new Date().toISOString() } }); cache.at = 0;
+        return respond(200, { site_id: site.site_id, test_window: v.window });
+      }
+      case "presets": return respond(200, { presets: SW.PRESETS });
+      case "agenda": {
+        const days = Math.max(1, Math.min(120, Number(qs.days) || 30));
+        const now = Date.now(), horizon = now + days * 86400000;
+        const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "JOB#", { limit: 300, desc: true })).filter((j) => allowed(tenant, j.tenant_id) && j.status === "pending" && Date.parse(j.run_at) <= horizon);
+        const schedules = (await db.scanConfig(configTable, "schedule")).filter((x) => allowed(tenant, x.tenant_id) && x.enabled !== false);
+        const items = jobs.map((j) => { const site = siteOk(j.scope?.site_id || cfg.lums.find((l) => l.luminaire_id === j.scope?.luminaire_id)?.site_id); const chk = site?.test_window ? SW.inWindow(site.test_window, Date.parse(j.run_at), site.tz) : { ok: true };
+          return { kind: "job", at: j.run_at, test_type: j.test_type, scope_name: j.scope_name, scope: j.scope, job_id: j.job_id, note: j.note, by: j.created_by, window_override: j.window_override || null, window_ok: chk.ok || !!j.window_override, window_reason: chk.reason || null }; });
+        for (const sch of schedules) {
+          const site = sch.scope?.site_id ? siteOk(sch.scope.site_id) : siteOk(cfg.lums.find((l) => l.luminaire_id === sch.scope?.luminaire_id)?.site_id);
+          for (const o of SW.occurrences(sch, now, 12)) { if (o.at > horizon) break; const chk = site?.test_window ? SW.inWindow(site.test_window, o.at, sch.tz) : { ok: true };
+            items.push({ kind: "schedule", at: new Date(o.at).toISOString(), test_type: sch.test_type, scope_name: sch.scope_name, scope: sch.scope, schedule_id: sch.schedule_id, name: sch.name, window_ok: chk.ok, window_reason: chk.reason || null }); }
+        }
+        items.sort((a, b) => a.at.localeCompare(b.at));
+        return respond(200, { days, items });
+      }
+      case "plan_annual": {
+        const b = parseBody(event);
+        const chosen = mySites.filter((s) => !Array.isArray(b.site_ids) || b.site_ids.includes(s.site_id));
+        const withCounts = chosen.map((s) => ({ ...s, luminaires: cfg.lums.filter((l) => l.site_id === s.site_id).length, rated_minutes: Math.max(60, ...cfg.lums.filter((l) => l.site_id === s.site_id).map((l) => l.rated_minutes || 180)) }));
+        const plan = SW.planAnnual(withCounts, { from: b.from, weeks: Number(b.weeks) || 12, perNight: Math.max(1, Number(b.per_night) || 1) });
+        if (!b.commit) return respond(200, { plan });
+        let created = 0;
+        for (const p of plan) { if (!p.at) continue; const job_id = crypto.randomUUID().slice(0, 8);
+          await db.putRollup(recordsTable, { pk: "JOBS", sk: `JOB#${p.at}#${job_id}`, entity_type: "job", job_id, tenant_id: withCounts.find((s) => s.site_id === p.site_id).tenant_id, test_type: "duration", scope: { site_id: p.site_id }, scope_name: p.site_name, run_at: p.at, stagger_window_min: 60, note: `Annual duration test — planned ${b.from || "batch"}`, status: "pending", created_by: who, created_at: new Date().toISOString(), dispatched: [], held: [], skipped: [], plan_batch: b.from || new Date().toISOString().slice(0, 10) }); created++; }
+        return respond(200, { plan, created });
       }
       case "job_cancel": {
         const b = parseBody(event);

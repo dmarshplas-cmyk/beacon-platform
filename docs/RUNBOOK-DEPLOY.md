@@ -40,9 +40,9 @@ Confirm the email subscription SNS sends you, or you'll get no digests.
 ```bash
 cd ~/beacon/src
 zip -j ~/ingest.zip el-ingest-handler.js el-adapters.js el-codec.js el-rules.js dynamodb.js
-zip -j ~/api.zip    el-api-handler.js el-codec.js el-jobs-lib.js el-rules.js control-lib.js api-lib.js dynamodb.js
+zip -j ~/api.zip    el-api-handler.js el-codec.js el-jobs-lib.js el-schedules-lib.js el-rules.js control-lib.js api-lib.js dynamodb.js dynamodb-ext.js
 zip -j ~/comp.zip   el-compliance-handler.js el-rules.js dynamodb.js
-zip -j ~/sched.zip  el-scheduler-handler.js el-jobs-lib.js el-rules.js el-codec.js control-lib.js dynamodb.js
+zip -j ~/sched.zip  el-scheduler-handler.js el-jobs-lib.js el-schedules-lib.js el-rules.js el-codec.js control-lib.js dynamodb.js
 
 for f in ingest:el-ingest api:el-api comp:el-compliance sched:el-scheduler; do
   aws lambda update-function-code --function-name ${f#*:} --zip-file fileb://~/${f%%:*}.zip \

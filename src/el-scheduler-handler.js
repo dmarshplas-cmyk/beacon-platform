@@ -14,6 +14,8 @@
 const db = require("./dynamodb");
 const ctl = require("./control-lib");
 const J = require("./el-jobs-lib");
+const SW = require("./el-schedules-lib");
+const crypto = require("crypto");
 const codecs = require("./el-codec");
 
 const log = (msg, extra) => console.log(`[scheduler] ${msg}`, extra ? JSON.stringify(extra) : "");
@@ -36,14 +38,30 @@ async function dispatchOne(lum, testType, dlApps, configTable, recordsTable, job
 exports.handler = async () => {
   const configTable = process.env.CONFIG_TABLE, recordsTable = process.env.RECORDS_TABLE;
   const now = Date.now();
+  // 1. Recurring schedules → jobs (one per occurrence, once).
+  const cfgAll = await db.scanConfig(configTable);
+  const schedules = cfgAll.filter((i) => i.entity_type === "schedule" && i.enabled !== false);
+  let materialised = 0;
+  for (const sch of schedules) {
+    for (const occ of SW.dueOccurrences(sch, now)) {
+      const job_id = crypto.randomUUID().slice(0, 8);
+      const at = new Date(occ.at).toISOString();
+      await db.putRollup(recordsTable, { pk: "JOBS", sk: `JOB#${at}#${job_id}`, entity_type: "job", job_id, tenant_id: sch.tenant_id, test_type: sch.test_type, scope: sch.scope, scope_name: sch.scope_name,
+        run_at: at, stagger_window_min: sch.stagger_window_min ?? 60, note: sch.name, status: "pending", created_by: `schedule:${sch.schedule_id}`, created_at: new Date(now).toISOString(), dispatched: [], held: [], skipped: [], schedule_id: sch.schedule_id });
+      await db.putConfigItem(configTable, { ...sch, last_materialised: occ.key, last_run_at: at });
+      materialised++;
+    }
+  }
+  if (materialised) log("materialised schedule occurrences", { materialised });
+
+  // 2. Run due jobs.
   const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "JOB#", { limit: 500, desc: false })).filter((j) => j.status === "pending" || j.status === "running");
   const due = jobs.filter((j) => Date.parse(j.run_at) <= now);
-  const results = { jobs: jobs.length, due: due.length, sent: 0, held: 0, skipped: 0, failed: 0, closed: 0 };
+  const results = { schedules: schedules.length, materialised, jobs: jobs.length, due: due.length, sent: 0, held: 0, skipped: 0, failed: 0, closed: 0 };
   if (!due.length) { log("idle", results); return results; }
 
-  const items = await db.scanConfig(configTable);
-  const lums = items.filter((i) => i.entity_type === "luminaire" && i.enabled !== false);
-  const dlApps = Object.fromEntries(items.filter((i) => i.entity_type === "downlink_app").map((d) => [d.app_id, d]));
+  const lums = cfgAll.filter((i) => i.entity_type === "luminaire" && i.enabled !== false);
+  const dlApps = Object.fromEntries(cfgAll.filter((i) => i.entity_type === "downlink_app").map((d) => [d.app_id, d]));
 
   for (const job of due) {
     const scope = J.expandScope(job, lums);

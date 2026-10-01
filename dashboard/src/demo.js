@@ -26,7 +26,15 @@ const SITES = [
   ["glan-yr-afon", "Glan-yr-Afon", "Llanidloes", "SY18 6EZ", 52.4478, -3.5402, 12, "block"],
   ["bro-ddyfi", "Bro Ddyfi", "Machynlleth", "SY20 8DR", 52.5920, -3.8530, 11, "sheltered"],
   ["tan-y-bryn", "Tan-y-Bryn", "Caersws", "SY17 5DR", 52.5162, -3.4290, 7, "block"],
+  ["sinema-maldwyn", "Sinema Maldwyn", "Newtown", "SY16 2NP", 52.5168, -3.3205, 26, "cinema"],
 ];
+const WINDOWS = {
+  "sinema-maldwyn": { days: [0, 1, 2, 3, 4, 5, 6], start: "08:00", end: "13:00", blackouts: [{ from: "2026-12-18", to: "2027-01-03", reason: "Christmas screenings — all-day programme" }], duration_gap_hours: 24, preset: "cinema", note: "Agreed with the duty manager. Doors open 13:30." },
+  "hafod-office": { days: [1, 2, 3, 4, 5], start: "19:00", end: "06:30", blackouts: [], duration_gap_hours: 24, preset: "office", note: "" },
+  "dolafon-house": { days: [0, 1, 2, 3, 4, 5, 6], start: "01:00", end: "05:00", blackouts: [], duration_gap_hours: 24, preset: "residential", note: "" },
+  "llys-hafan": { days: [0, 1, 2, 3, 4, 5, 6], start: "01:00", end: "05:00", blackouts: [], duration_gap_hours: 24, preset: "residential", note: "Sheltered scheme — warden informed" },
+  "ty-gwyn-court": { days: [0, 1, 2, 3, 4, 5, 6], start: "01:00", end: "05:00", blackouts: [], duration_gap_hours: 24, preset: "residential", note: "" },
+};
 const LOCS = ["Ground floor corridor", "First floor corridor", "Second floor corridor", "Stair core A", "Stair core B", "Main entrance", "Rear exit", "Plant room", "Bin store", "Lift lobby", "Community room", "Laundry", "Car park entrance", "Fire exit east", "Fire exit west", "Third floor corridor", "Roof access", "Reception", "Kitchen exit"];
 
 // Per-site "story" knobs so the estate isn't uniformly green.
@@ -135,6 +143,7 @@ const YEAR = new Date(NOW).getUTCFullYear();
 const DB = { sites: {}, lums: {}, siteStates: {} };
 for (const [site_id, name, town, postcode, lat, lng, count, kind] of SITES) {
   const site = { site_id, tenant_id: "cambrian", name, kind, address: { line1: name, town, postcode }, gps: { lat, lng }, tz: "Europe/London",
+    test_window: WINDOWS[site_id] || null,
     test_schedule: { function: { day_of_month: 1 + (site_id.length % 20) } } }; // only used to place the simulated automatic tests
   const story = STORY[site_id] || {};
   const lums = Array.from({ length: count }, (_, i) => buildLuminaire(site, i, story));
@@ -153,8 +162,26 @@ for (const [site_id, name, town, postcode, lat, lng, count, kind] of SITES) {
     status: alerts || overdue || failed ? "alert" : warns || due || stale ? "warn" : "ok", month_grid: grid, computed_at: iso(NOW - 3 * 3600000) };
 }
 
+
+const SCHEDULES = [
+  { schedule_id: "cin-fn", tenant_id: "cambrian", name: "Function test — cinema, 1st Tuesday", scope: { site_id: "sinema-maldwyn" }, scope_name: "Sinema Maldwyn", test_type: "function", recurrence: { kind: "monthly-nth-weekday", nth: 1, weekday: 2 }, time: "09:30", tz: "Europe/London", stagger_window_min: 30, enabled: true, note: "Fittings' own clocks fire at 02:00 — the manager wants a daytime test on record each month", created_by: "d.marsh", created_at: iso(NOW - 40 * DAY), last_run_at: iso(NOW - 25 * DAY) },
+  { schedule_id: "cin-dur", tenant_id: "cambrian", name: "Duration test — cinema, annual", scope: { site_id: "sinema-maldwyn" }, scope_name: "Sinema Maldwyn", test_type: "duration", recurrence: { kind: "annual", month: 2, day_of_month: 10 }, time: "08:30", tz: "Europe/London", stagger_window_min: 45, enabled: true, note: "Before the February half-term programme", created_by: "d.marsh", created_at: iso(NOW - 40 * DAY) },
+  { schedule_id: "haf-dur", tenant_id: "cambrian", name: "Duration test — Hafod Office", scope: { site_id: "hafod-office" }, scope_name: "Hafod Office", test_type: "duration", recurrence: { kind: "annual", month: 11, day_of_month: 14 }, time: "19:30", tz: "Europe/London", stagger_window_min: 60, enabled: false, note: "Paused until the gateway swap is done", created_by: "n.sacke", created_at: iso(NOW - 10 * DAY) },
+];
+const toMin = (hm) => { const [h, m] = hm.split(":").map(Number); return h * 60 + (m || 0); };
+const localParts = (ms, tz = "Europe/London") => { const f = new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false }); const p = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, x.value])); const hour = p.hour === "24" ? 0 : Number(p.hour); return { ymd: `${p.year}-${p.month}-${p.day}`, y: Number(p.year), m: Number(p.month), d: Number(p.day), minutes: hour * 60 + Number(p.minute), dow: { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[p.weekday] }; };
+const localToMs = (y, m, d, hm, tz = "Europe/London") => { const [H, M] = hm.split(":").map(Number); let g = Date.UTC(y, m - 1, d, H, M); for (let i = 0; i < 3; i++) { const p = localParts(g, tz); const diff = Date.UTC(p.y, p.m - 1, p.d, Math.floor(p.minutes / 60), p.minutes % 60) - Date.UTC(y, m - 1, d, H, M); if (!diff) break; g -= diff; } return g; };
+function inWindow(w, ms, tz) { if (!w) return { ok: true }; const p = localParts(ms, tz); const s0 = toMin(w.start), e0 = toMin(w.end), crosses = e0 <= s0; let dayOf = p.dow, inHours; if (!crosses) inHours = p.minutes >= s0 && p.minutes < e0; else if (p.minutes >= s0) inHours = true; else if (p.minutes < e0) { inHours = true; dayOf = (p.dow + 6) % 7; } else inHours = false; if (!inHours) return { ok: false, reason: `outside testing hours (${w.start}–${w.end})` }; if (!w.days.includes(dayOf)) return { ok: false, reason: "not an allowed day" }; const ymd = crosses && p.minutes < e0 ? localParts(ms - DAY, tz).ymd : p.ymd; const bo = (w.blackouts || []).find((b) => ymd >= b.from && ymd <= b.to); if (bo) return { ok: false, reason: `blackout: ${bo.reason || bo.from}` }; return { ok: true }; }
+function nextSlot(w, from, tz, need) { if (!w) return from; for (let i = 0; i < 60; i++) { const p = localParts(from + i * DAY, tz); const cands = i === 0 && inWindow(w, from, tz).ok ? [from] : []; cands.push(localToMs(p.y, p.m, p.d, w.start, tz)); for (const c of cands) { if (c < from || !inWindow(w, c, tz).ok) continue; if (need && !inWindow(w, c + need * 60000 - 60000, tz).ok) continue; return c; } } return null; }
+const nthWeekday = (y, m, nth, wd) => { if (nth > 0) { const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(); return 1 + ((wd - first + 7) % 7) + (nth - 1) * 7; } const dim = new Date(Date.UTC(y, m, 0)).getUTCDate(); const last = new Date(Date.UTC(y, m - 1, dim)).getUTCDay(); return dim - ((last - wd + 7) % 7); };
+function occurrences(sch, from, count) { const r = sch.recurrence, out = [], p = localParts(from, sch.tz); const push = (y, m, d) => { const at = localToMs(y, m, d, sch.time, sch.tz); if (at > from) out.push(at); }; if (r.kind === "monthly-dom" || r.kind === "monthly-nth-weekday") for (let i = 0; out.length < count && i < count + 2; i++) { let y = p.y, m = p.m + i; while (m > 12) { m -= 12; y++; } push(y, m, r.kind === "monthly-dom" ? r.day_of_month : nthWeekday(y, m, r.nth, r.weekday)); } else if (r.kind === "annual") for (let i = 0; out.length < count && i < count + 1; i++) push(p.y + i, r.month, r.day_of_month); else if (r.kind === "weekly") for (let i = 0; out.length < count && i < (count + 1) * 7; i++) { const q = localParts(from + i * DAY, sch.tz); if (q.dow === r.weekday) push(q.y, q.m, q.d); } else if (r.kind === "interval") { const [ay, am, ad] = (r.anchor || iso(NOW).slice(0, 10)).split("-").map(Number); let at = localToMs(ay, am, ad, sch.time, sch.tz); while (at <= from) at += r.interval_days * DAY; for (let i = 0; i < count; i++) { out.push(at); at += r.interval_days * DAY; } } return out.slice(0, count); }
+const ord = (n) => (n === -1 ? "last" : `${n}${["th", "st", "nd", "rd"][(n % 10 > 3 || Math.floor(n % 100 / 10) === 1) ? 0 : n % 10]}`);
+const WDN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], MNN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const describe = (r, t) => r.kind === "monthly-dom" ? `Monthly on the ${ord(r.day_of_month)} at ${t}` : r.kind === "monthly-nth-weekday" ? `Monthly on the ${ord(r.nth)} ${WDN[r.weekday]} at ${t}` : r.kind === "annual" ? `Every ${ord(r.day_of_month)} ${MNN[r.month - 1]} at ${t}` : r.kind === "weekly" ? `Every ${WDN[r.weekday]} at ${t}` : `Every ${r.interval_days} days at ${t}`;
+const PRESETS = { residential: { label: "Residential — overnight", days: [0,1,2,3,4,5,6], start: "01:00", end: "05:00" }, office: { label: "Office — evenings and weekends", days: [0,1,2,3,4,5,6], start: "19:00", end: "06:30" }, cinema: { label: "Cinema / theatre — mornings before opening", days: [0,1,2,3,4,5,6], start: "08:00", end: "13:00" }, retail: { label: "Retail — before opening", days: [0,1,2,3,4,5,6], start: "05:30", end: "08:30" }, school: { label: "School — weekends and holidays", days: [0,6], start: "08:00", end: "18:00" }, healthcare: { label: "Healthcare — any time, by agreement", days: [0,1,2,3,4,5,6], start: "00:00", end: "23:59" }, always: { label: "No restriction", days: [0,1,2,3,4,5,6], start: "00:00", end: "23:59" } };
+const schedOut = (sch) => { const site = DB.sites[sch.scope.site_id]; const next = occurrences(sch, Date.now(), 3); const bad = next.map((at) => ({ at, c: inWindow(site?.test_window, at, sch.tz) })).filter((x) => !x.c.ok); return { ...sch, description: describe(sch.recurrence, sch.time), next: next.map((n) => iso(n)), window_check: { ok: !bad.length, problems: bad.map((x) => `${iso(x.at).slice(0, 16)}: ${x.c.reason}`) } }; };
 const JOBS = [
-  { job_id: "a1b2c3d4", tenant_id: "cambrian", test_type: "duration", scope: { site_id: "dolafon-house" }, scope_name: "Dolafon House", run_at: iso(NOW + 9 * DAY + 3600000 * 13), stagger_window_min: 60, note: "Re-test after battery swaps on EL-03/04", status: "pending", created_by: "d.marsh", created_at: iso(NOW - DAY), dispatched: [], held: [], skipped: [] },
+  { job_id: "a1b2c3d4", tenant_id: "cambrian", test_type: "duration", scope: { site_id: "dolafon-house" }, scope_name: "Dolafon House", run_at: iso(localToMs(...iso(NOW + 9 * DAY).slice(0, 10).split("-").map(Number), "02:30")), stagger_window_min: 60, note: "Re-test after battery swaps on EL-03/04", status: "pending", created_by: "d.marsh", created_at: iso(NOW - DAY), dispatched: [], held: [], skipped: [] },
   { job_id: "e5f6a7b8", tenant_id: "cambrian", test_type: "function", scope: { site_id: "maesyrhaf" }, scope_name: "Maes-yr-Haf", run_at: iso(NOW - 3 * DAY), stagger_window_min: 30, note: "Gateway back — confirm every fitting still tests", status: "done", created_by: "n.sacke", created_at: iso(NOW - 4 * DAY), dispatched: Array.from({ length: 12 }, (_, i) => `maesyrhaf-el-${String(i + 1).padStart(2, "0")}`), held: [], skipped: [], finished_at: iso(NOW - 3 * DAY + 3600000) },
 ];
 const deviceNext = (latest) => ({ function_in_days: Math.max(0, 31 - (latest.days_since_function_test ?? 0)), duration_in_days: latest.days_since_duration_test != null ? Math.max(0, 365 - latest.days_since_duration_test) : null });
@@ -167,7 +194,7 @@ export async function demoGet(path) {
   await wait(120 + rnd() * 200);
   let m;
   if (/^\/api\/portfolio/.test(path)) {
-    const sites = Object.values(DB.sites).map((s) => ({ ...DB.siteStates[s.site_id], site_id: s.site_id, name: s.name, kind: s.kind, address: s.address, gps: s.gps, tz: s.tz }));
+    const sites = Object.values(DB.sites).map((s) => ({ ...DB.siteStates[s.site_id], site_id: s.site_id, name: s.name, kind: s.kind, address: s.address, gps: s.gps, tz: s.tz, test_window: s.test_window }));
     const t = sites.reduce((a, x) => ({ sites: a.sites + 1, luminaires: a.luminaires + x.luminaires, compliant: a.compliant + x.compliant, overdue: a.overdue + x.overdue, failed: a.failed + x.failed, open_faults: a.open_faults + x.open_faults,
       sites_alert: a.sites_alert + (x.status === "alert"), sites_warn: a.sites_warn + (x.status === "warn") }), { sites: 0, luminaires: 0, compliant: 0, overdue: 0, failed: 0, open_faults: 0, sites_alert: 0, sites_warn: 0 });
     return { tenant: "cambrian", totals: [{ tenant_id: "cambrian", ...t, compliant_pct: Math.round((t.compliant / t.luminaires) * 1000) / 10, computed_at: iso(NOW - 3 * 3600000) }], sites };
@@ -199,6 +226,15 @@ export async function demoGet(path) {
       dispatches: [{ test_type: "function", occurrence: `function:${iso(NOW).slice(0, 7)}`, by: "schedule", at: l.tests[0]?.started_at }] };
   }
   if (/^\/api\/jobs/.test(path)) return { jobs: [...JOBS].sort((a, b) => (a.run_at < b.run_at ? 1 : -1)) };
+  if (/^\/api\/schedules/.test(path)) return { schedules: SCHEDULES.map(schedOut) };
+  if (/^\/api\/windows\/presets/.test(path)) return { presets: PRESETS };
+  if ((m = /^\/api\/sites\/([^/]+)\/window$/.exec(path))) return { site_id: m[1], tz: "Europe/London", test_window: DB.sites[m[1]]?.test_window || null, presets: PRESETS };
+  if (/^\/api\/agenda/.test(path)) {
+    const days = Number(new URLSearchParams(path.split("?")[1] || "").get("days")) || 30, now = Date.now(), horizon = now + days * DAY;
+    const items = JOBS.filter((j) => j.status === "pending" && Date.parse(j.run_at) <= horizon).map((j) => { const site = DB.sites[j.scope?.site_id || DB.lums[j.scope?.luminaire_id]?.lum.site_id]; const c = inWindow(site?.test_window, Date.parse(j.run_at), site?.tz); return { kind: "job", at: j.run_at, test_type: j.test_type, scope_name: j.scope_name, scope: j.scope, job_id: j.job_id, note: j.note, by: j.created_by, window_override: j.window_override || null, window_ok: c.ok || !!j.window_override, window_reason: c.reason || null }; });
+    for (const sch of SCHEDULES.filter((x) => x.enabled)) { const site = DB.sites[sch.scope.site_id]; for (const at of occurrences(sch, now, 12)) { if (at > horizon) break; const c = inWindow(site?.test_window, at, sch.tz); items.push({ kind: "schedule", at: iso(at), test_type: sch.test_type, scope_name: sch.scope_name, scope: sch.scope, schedule_id: sch.schedule_id, name: sch.name, window_ok: c.ok, window_reason: c.reason || null }); } }
+    items.sort((a, b) => a.at.localeCompare(b.at)); return { days, items };
+  }
   if (/^\/api\/exceptions/.test(path)) {
     const ex = Object.values(DB.lums).filter((l) => l.state.status !== "ok").map((l) => ({ luminaire_id: l.lum.luminaire_id, name: l.lum.name, location: l.lum.location, site_id: l.lum.site_id, site_name: DB.sites[l.lum.site_id].name, state: l.state, faults: l.faults.filter((f) => f.status !== "closed") }));
     ex.sort((a, b) => (a.state.status === b.state.status ? 0 : a.state.status === "alert" ? -1 : 1));
@@ -218,6 +254,7 @@ export async function demoGet(path) {
 
 export async function demoPost(path, body) {
   await wait(200);
+  let m;
   if (path === "/api/faults/ack" || path === "/api/faults/close") {
     const l = DB.lums[body.luminaire_id]; const f = l?.faults.find((x) => x.opened_at === body.opened_at); if (!f) throw new Error("fault not found");
     const at = iso(Date.now());
@@ -237,8 +274,36 @@ export async function demoPost(path, body) {
   if (path === "/api/jobs") {
     const scopeName = body.scope?.site_id ? DB.sites[body.scope.site_id]?.name : DB.lums[body.scope?.luminaire_id]?.lum.name;
     if (!scopeName) throw new Error("scope not found");
-    const job = { job_id: Math.random().toString(16).slice(2, 10), tenant_id: "cambrian", test_type: body.test_type, scope: body.scope, scope_name: scopeName, run_at: new Date(body.run_at).toISOString(), stagger_window_min: Number(body.stagger_window_min ?? 60), note: body.note || "", status: "pending", created_by: "you", created_at: iso(Date.now()), dispatched: [], held: [], skipped: [] };
+    const site = DB.sites[body.scope?.site_id || DB.lums[body.scope?.luminaire_id]?.lum.site_id];
+    const runAt = Date.parse(body.run_at);
+    if (site?.test_window) {
+      const need = body.test_type === "duration" ? 180 + Number(body.stagger_window_min || 0) : Number(body.stagger_window_min || 0) + 5;
+      const c = inWindow(site.test_window, runAt, site.tz), c2 = c.ok ? inWindow(site.test_window, runAt + need * 60000, site.tz) : c;
+      if ((!c.ok || !c2.ok) && !String(body.override_reason || "").trim()) { const slot = nextSlot(site.test_window, runAt, site.tz, need); const err = new Error(`Outside this site's testing window — ${!c.ok ? c.reason : `test would run past the end of the testing window (${need} min needed)`}`); err.detail = { next_slot: slot ? iso(slot) : null }; throw err; }
+      if (!c.ok || !c2.ok) body.window_override = String(body.override_reason).slice(0, 200);
+    }
+    const job = { window_override: body.window_override || null, job_id: Math.random().toString(16).slice(2, 10), tenant_id: "cambrian", test_type: body.test_type, scope: body.scope, scope_name: scopeName, run_at: new Date(body.run_at).toISOString(), stagger_window_min: Number(body.stagger_window_min ?? 60), note: body.note || "", status: "pending", created_by: "you", created_at: iso(Date.now()), dispatched: [], held: [], skipped: [] };
     JOBS.push(job); return { job };
+  }
+  if (path === "/api/schedules" || /^\/api\/schedules\/[^/]+\/update$/.test(path)) {
+    const id = path.split("/")[3]; const existing = id ? SCHEDULES.find((x) => x.schedule_id === id) : null; if (id && !existing) throw new Error("schedule not found");
+    const merged = { ...(existing || {}), ...body, scope: body.scope || existing?.scope }; const site = DB.sites[merged.scope?.site_id || DB.lums[merged.scope?.luminaire_id]?.lum.site_id];
+    const sch = { schedule_id: existing?.schedule_id || Math.random().toString(16).slice(2, 10), tenant_id: "cambrian", name: merged.name || `${merged.test_type === "duration" ? "Duration" : "Function"} test — ${describe(merged.recurrence, merged.time)}`, scope: merged.scope, scope_name: site?.name || DB.lums[merged.scope?.luminaire_id]?.lum.name, test_type: merged.test_type, recurrence: merged.recurrence, time: merged.time, tz: "Europe/London", stagger_window_min: Number(merged.stagger_window_min ?? 60), enabled: merged.enabled !== false, note: merged.note || "", created_by: existing?.created_by || "you", created_at: existing?.created_at || iso(Date.now()), last_run_at: existing?.last_run_at };
+    const chk = schedOut(sch).window_check; if (!chk.ok && !String(body.override_reason || "").trim()) { const err = new Error(`Outside the site's testing window: ${chk.problems[0]}`); err.detail = { problems: chk.problems }; throw err; }
+    sch.window_override = !chk.ok ? body.override_reason : null;
+    if (existing) Object.assign(existing, sch); else SCHEDULES.push(sch); return { schedule: schedOut(sch) };
+  }
+  if ((m = /^\/api\/schedules\/([^/]+)\/delete$/.exec(path))) { const i = SCHEDULES.findIndex((x) => x.schedule_id === m[1]); if (i < 0) throw new Error("schedule not found"); SCHEDULES.splice(i, 1); return { deleted: m[1] }; }
+  if ((m = /^\/api\/sites\/([^/]+)\/window$/.exec(path))) { const site = DB.sites[m[1]]; if (!site) throw new Error("not found"); site.test_window = body.test_window === null ? null : { ...body.test_window, updated_by: "you" }; return { site_id: m[1], test_window: site.test_window }; }
+  if (path === "/api/plan/annual") {
+    const chosen = Object.values(DB.sites).filter((s) => !Array.isArray(body.site_ids) || body.site_ids.includes(s.site_id)).map((s) => ({ ...s, luminaires: DB.siteStates[s.site_id].luminaires })).sort((a, b) => b.luminaires - a.luminaires);
+    const startMs = body.from ? Date.parse(body.from + "T00:00:00Z") : Date.now() + DAY, weeks = Number(body.weeks) || 12, perNight = Math.max(1, Number(body.per_night) || 1), endMs = startMs + weeks * 7 * DAY;
+    const used = {}; const step = Math.max(DAY, Math.floor((endMs - startMs) / Math.max(1, chosen.length))); const plan = [];
+    chosen.forEach((s, i) => { let cursor = startMs + i * step, placed = null; for (let t = 0; t < 120 && !placed; t++) { let slot; if (s.test_window) slot = nextSlot(s.test_window, cursor, s.tz, 180); else { const q = localParts(cursor, s.tz); slot = localToMs(q.y, q.m, q.d, "02:00", s.tz); if (slot < cursor) slot += DAY; } if (slot === null || slot >= endMs) break; const ymd = localParts(slot, s.tz).ymd; if ((used[ymd] || 0) < perNight) { used[ymd] = (used[ymd] || 0) + 1; placed = slot; } else { const [y, mo, d] = ymd.split("-").map(Number); cursor = localToMs(y, mo, d, "00:00", s.tz) + DAY; } } plan.push(placed ? { site_id: s.site_id, site_name: s.name, at: iso(placed), luminaires: s.luminaires } : { site_id: s.site_id, site_name: s.name, at: null, reason: "no allowed slot in the period" }); });
+    plan.sort((a, b) => (a.at || "z").localeCompare(b.at || "z"));
+    if (!body.commit) return { plan };
+    let created = 0; for (const p of plan) { if (!p.at) continue; JOBS.push({ job_id: Math.random().toString(16).slice(2, 10), tenant_id: "cambrian", test_type: "duration", scope: { site_id: p.site_id }, scope_name: p.site_name, run_at: p.at, stagger_window_min: 60, note: `Annual duration test — planned ${body.from}`, status: "pending", created_by: "you", created_at: iso(Date.now()), dispatched: [], held: [], skipped: [] }); created++; }
+    return { plan, created };
   }
   if (path === "/api/jobs/cancel") { const j = JOBS.find((x) => x.job_id === body.job_id); if (!j) throw new Error("job not found"); Object.assign(j, { status: "cancelled", cancelled_by: "you", cancelled_at: iso(Date.now()) }); return { job: j }; }
   if (path === "/api/tests/manual") {

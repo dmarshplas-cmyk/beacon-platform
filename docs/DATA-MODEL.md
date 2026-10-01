@@ -7,7 +7,16 @@
 { "pk": "TENANT#cambrian", "sk": "SITE#dolafon-house", "entity_type": "site",
   "site_id": "dolafon-house", "tenant_id": "cambrian", "name": "Dolafon House", "kind": "high-rise",
   "address": { "line1": "Dolafon House", "town": "Newtown", "postcode": "SY16 1DU" }, "gps": { "lat": 52.5111, "lng": -3.3092 },
-  "tz": "Europe/London" }
+  "tz": "Europe/London",
+  "test_window": { "days": [0,1,2,3,4,5,6], "start": "08:00", "end": "13:00", "duration_gap_hours": 24, "preset": "cinema",
+                   "blackouts": [{ "from": "2026-12-18", "to": "2027-01-03", "reason": "Christmas screenings" }], "note": "Agreed with the duty manager" } }
+
+{ "pk": "TENANT#cambrian", "sk": "SCHEDULE#cin-fn", "entity_type": "schedule", "schedule_id": "cin-fn", "tenant_id": "cambrian",
+  "name": "Function test — cinema, 1st Tuesday", "scope": { "site_id": "sinema-maldwyn" }, "scope_name": "Sinema Maldwyn", "test_type": "function",
+  "recurrence": { "kind": "monthly-nth-weekday", "nth": 1, "weekday": 2 }, "time": "09:30", "tz": "Europe/London", "stagger_window_min": 30,
+  "enabled": true, "note": "…", "created_by": "d.marsh", "created_at": "…", "last_materialised": "cin-fn:2026-10-06", "last_run_at": "…" }
+  // recurrence.kind: monthly-dom {day_of_month} · monthly-nth-weekday {nth 1-4|-1, weekday 0-6} · annual {month, day_of_month} · weekly {weekday} · interval {interval_days, anchor}
+  // the 15-min tick turns each occurrence into a JOB (created_by "schedule:<id>") exactly once
 
 { "pk": "SITE#dolafon-house", "sk": "LUMINAIRE#dolafon-house-el-03", "entity_type": "luminaire",
   "luminaire_id": "dolafon-house-el-03", "site_id": "dolafon-house", "tenant_id": "cambrian",

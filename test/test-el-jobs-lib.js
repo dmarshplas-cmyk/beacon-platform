@@ -44,4 +44,16 @@ t("device counters give expected next automatic tests", () => {
   assert.deepStrictEqual(J.deviceNext({ days_since_function_test: 20, days_since_duration_test: 300 }), { function_in_days: 11, duration_in_days: 65 });
   assert.deepStrictEqual(J.deviceNext({ days_since_function_test: 40 }), { function_in_days: 0, duration_in_days: null });
 });
+t("job validation honours the site testing window and offers the next slot", () => {
+  const cinema = { site_id: "c", tz: "Europe/London", rated_minutes: 180, test_window: { days: [0,1,2,3,4,5,6], start: "08:00", end: "13:00", blackouts: [] } };
+  const bad = J.validateJob({ test_type: "duration", scope: { site_id: "c" }, run_at: "2026-10-05T19:00:00Z" }, NOW, cinema);
+  assert.strictEqual(bad.ok, false); assert.match(bad.reason, /testing window/); assert.strictEqual(bad.next_slot, "2026-10-06T07:00:00.000Z");
+  const late = J.validateJob({ test_type: "duration", scope: { site_id: "c" }, run_at: "2026-10-05T11:30:00Z", stagger_window_min: 0 }, NOW, cinema); // 12:30 BST + 180 min runs past 13:00
+  assert.strictEqual(late.ok, false); assert.match(late.reason, /past the end/);
+  const ok = J.validateJob({ test_type: "duration", scope: { site_id: "c" }, run_at: "2026-10-05T07:30:00Z", stagger_window_min: 30 }, NOW, cinema);
+  assert.strictEqual(ok.ok, true); assert.strictEqual(ok.job.window_override, undefined);
+  const forced = J.validateJob({ test_type: "function", scope: { site_id: "c" }, run_at: "2026-10-05T19:00:00Z", override_reason: "Agreed with duty manager" }, NOW, cinema);
+  assert.strictEqual(forced.ok, true); assert.strictEqual(forced.job.window_override, "Agreed with duty manager");
+});
+
 console.log(`\n${n} jobs tests passed`);

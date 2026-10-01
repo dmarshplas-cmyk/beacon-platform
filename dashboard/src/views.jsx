@@ -315,7 +315,9 @@ export function Site({ siteId }) {
         <Panel title="Automatic testing" right={<span className="muted">BS EN 62034</span>}>
           <AutoTesting luminaires={luminaires} />
         </Panel>
-        <Panel title="Manual tests" right={<a href={`#/site/${siteId}/job`}>Schedule a test</a>}>
+        <Panel title="Manual tests" right={<a href={`#/testing/oneoff?site=${siteId}`}>Schedule a test</a>}>
+          {site.test_window ? <div className="muted small-note winline-site">Testing window: {site.test_window.start}–{site.test_window.end}{site.test_window.days?.length === 7 ? " daily" : ""}{site.test_window.blackouts?.length ? ` · ${site.test_window.blackouts.length} blackout dates` : ""} · <a href={`#/testing/windows?site=${siteId}`}>change</a></div>
+            : <div className="muted small-note winline-site">No testing window set — <a href={`#/testing/windows?site=${siteId}`}>set one</a> if this building has occupied hours.</div>}
           <JobsList jobs={jobs} compact onChange={reload} />
           <div className="control-buttons">
             <button className="btn ghost" disabled={running} onClick={runAll}>{running ? "Sending…" : "Run function test now"}</button>
@@ -389,51 +391,6 @@ function JobsList({ jobs, compact, onChange }) {
           {j.status === "pending" && <div className="fault-actions"><button className="btn tiny ghost" onClick={() => cancel(j)}>Cancel</button></div>}
         </div>
       ))}
-    </div>
-  );
-}
-
-export function ScheduleJob({ siteId, luminaireId }) {
-  const path = luminaireId ? `/api/luminaires/${luminaireId}` : `/api/sites/${siteId}`;
-  const { data, err } = useApi(path);
-  const toast = useToast();
-  const tomorrow = new Date(Date.now() + 86400000); tomorrow.setHours(2, 0, 0, 0);
-  const [f, setF] = useState({ test_type: "function", run_at: tomorrow.toISOString().slice(0, 16), stagger_window_min: 60, note: "" });
-  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null);
-  if (err) return <ErrorBox err={err} />;
-  if (!data) return <PageSkeleton />;
-  const name = luminaireId ? `${data.luminaire.site_name} · ${data.luminaire.name}` : data.site.name;
-  const back = luminaireId ? `#/luminaire/${luminaireId}` : `#/site/${siteId}`;
-  const save = async () => {
-    setBusy(true); setMsg(null);
-    try { const r = await A.apiPost("/api/jobs", { ...f, run_at: new Date(f.run_at).toISOString(), scope: luminaireId ? { luminaire_id: luminaireId } : { site_id: siteId } }); toast(`Scheduled for ${A.fmtDateTime(r.job.run_at)}.`); go(back.slice(1)); }
-    catch (e) { setMsg(e.message); } finally { setBusy(false); }
-  };
-  return (
-    <div className="page narrow">
-      <div className="page-head"><div><a className="back" href={back}>{name}</a><h1 className="h1">Schedule a manual test</h1><div className="sub muted">{luminaireId ? "One fitting." : `Every fitting on ${data.site.name}, staggered so the site is never dark at once.`}</div></div></div>
-      <Panel title="Test">
-        <div className="form-row">
-          <label>Type<select value={f.test_type} onChange={(e) => setF({ ...f, test_type: e.target.value })}><option value="function">Function (short)</option><option value="duration">Duration (full rated time)</option></select></label>
-          <label>When<input type="datetime-local" value={f.run_at} onChange={(e) => setF({ ...f, run_at: e.target.value })} /></label>
-          {!luminaireId && <label>Stagger over (min)<input type="number" min="0" max="360" value={f.stagger_window_min} onChange={(e) => setF({ ...f, stagger_window_min: Number(e.target.value) })} /></label>}
-        </div>
-        <div className="form-row"><label>Why (goes in the logbook)<input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. re-test after battery replacement" /></label></div>
-        {f.test_type === "duration" && <div className="muted small-note">Choose a quiet night. Fittings are depleted for up to 24 h afterwards, and a test is held back automatically if a real mains outage happened in the last 24 h.</div>}
-        <div className="control-buttons"><button className="btn" disabled={busy} onClick={save}>{busy ? "Scheduling…" : "Schedule"}</button>{msg && <span className="alert-text">{msg}</span>}</div>
-      </Panel>
-    </div>
-  );
-}
-
-export function Jobs() {
-  const { data, err, reload } = useApi("/api/jobs");
-  if (err) return <ErrorBox err={err} />;
-  if (!data) return <PageSkeleton />;
-  return (
-    <div className="page narrow">
-      <div className="page-head"><div><a className="back" href="#/">Estate</a><h1 className="h1">Manual tests</h1><div className="sub muted">Scheduled, running and recent. Fittings run their routine tests on their own.</div></div></div>
-      <Panel title="All jobs"><JobsList jobs={data.jobs} onChange={reload} /></Panel>
     </div>
   );
 }
