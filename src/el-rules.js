@@ -276,7 +276,7 @@ function testHoldoff(lastMainsRestoredAt, lum, nowMs = Date.now()) {
 
 /** Stagger N luminaires across a window: returns offset minutes per index. */
 function staggerOffsets(count, windowMin = 60, minGapMin = 2) {
-  if (count <= 1) return [0];
+  if (count <= 1 || !windowMin) return Array.from({ length: Math.max(1, count) }, () => 0);
   const gap = Math.max(minGapMin, Math.floor(windowMin / count));
   return Array.from({ length: count }, (_, i) => i * gap);
 }

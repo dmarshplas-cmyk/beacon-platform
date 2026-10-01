@@ -1,7 +1,9 @@
-# RUNBOOK — Beacon live in AWS (one CloudShell session)
+# RUNBOOK — Clearway live in AWS (one CloudShell session)
 
 Everything runs in **AWS CloudShell, eu-west-1**, same account and workflow as
-Pulse. ~45 minutes. Stack name is `beacon`; nothing collides with
+Pulse. ~45 minutes. The stack, bucket and folder keep the working name `beacon`
+(renaming a stack means recreating it; the product name lives in `config.json` and
+the Cognito invite). Nothing collides with
 `energy-platform` (different table, function, pool and bucket names).
 
 Get the repo into CloudShell first: push `beacon/` to GitHub and clone it, or
@@ -26,9 +28,10 @@ aws cloudformation deploy \
 Creates `el_config`, `el_events` (TTL on), `el_records`, four Lambdas with
 placeholder code (`el-ingest`, `el-api`, `el-compliance`, `el-scheduler`), the
 ingest and data HTTP APIs, Cognito pool `el-users` (MFA), SNS topic
-`el-alerts`, S3 + CloudFront for the console. The 15-minute scheduler tick and
-the 03:00 UTC compliance run are created **enabled** — harmless with nothing
-configured, they log and exit.
+`el-alerts`, S3 + CloudFront for the console. The 15-minute job-runner tick and
+the 03:00 UTC compliance run are created **enabled** — with no jobs they log
+`idle` and exit. Luminaires run their own routine tests; nothing is ever sent
+unless someone schedules a manual test.
 
 Confirm the email subscription SNS sends you, or you'll get no digests.
 
@@ -37,9 +40,9 @@ Confirm the email subscription SNS sends you, or you'll get no digests.
 ```bash
 cd ~/beacon/src
 zip -j ~/ingest.zip el-ingest-handler.js el-adapters.js el-codec.js el-rules.js dynamodb.js
-zip -j ~/api.zip    el-api-handler.js el-codec.js el-schedule-lib.js time-local.js el-rules.js control-lib.js api-lib.js dynamodb.js
+zip -j ~/api.zip    el-api-handler.js el-codec.js el-jobs-lib.js el-rules.js control-lib.js api-lib.js dynamodb.js
 zip -j ~/comp.zip   el-compliance-handler.js el-rules.js dynamodb.js
-zip -j ~/sched.zip  el-scheduler-handler.js el-schedule-lib.js time-local.js el-rules.js el-codec.js control-lib.js dynamodb.js
+zip -j ~/sched.zip  el-scheduler-handler.js el-jobs-lib.js el-rules.js el-codec.js control-lib.js dynamodb.js
 
 for f in ingest:el-ingest api:el-api comp:el-compliance sched:el-scheduler; do
   aws lambda update-function-code --function-name ${f#*:} --zip-file fileb://~/${f%%:*}.zip \
@@ -79,7 +82,7 @@ python3 scripts/register-source.py tti-beacon --format tti --codec hbi --name "T
 
 Save the token it prints. In TTI: Application → Integrations → Webhooks →
 Custom → URL = the printed webhook, header `x-api-key: <token>`, enable
-**Uplink message** only. No payload formatter is needed on TTI — Beacon decodes
+**Uplink message** only. No payload formatter is needed on TTI — Clearway decodes
 the raw frame itself.
 
 Prove the pipeline without a luminaire (the seed's first Dolafon fitting):
@@ -120,8 +123,8 @@ EOF
 
 Then set `control.commands.run_function_test` / `run_duration_test` (hex) on
 each luminaire item, or bulk-update them once HBI confirm the bytes. Until
-then "Run now" returns *no downlink bytes configured* and the scheduler logs
-`skip — no downlink bytes/creds`. Nothing is ever sent unless the bytes exist.
+then "Run now" returns *no downlink bytes configured* and manual jobs record
+`no downlink bytes or credentials` per fitting. Nothing is ever sent unless the bytes exist.
 
 ## 6) Users
 
@@ -141,7 +144,7 @@ CLIENT=$(aws cloudformation describe-stacks --stack-name beacon --region eu-west
   --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text)
 cd ~/beacon/dashboard
 cat > public/config.json <<EOF
-{ "brand": "Beacon", "tagline": "Every fitting. Every test. On record.",
+{ "brand": "Clearway", "tagline": "Every fitting. Every test. On record.",
   "apiBase": "$API", "region": "eu-west-1", "userPoolClientId": "$CLIENT", "demo": false }
 EOF
 npm install && npm run build
@@ -167,7 +170,7 @@ the 14 seeded sites.
 | Console change | `npm run build && aws s3 sync dist/ s3://$BUCKET/ --delete && aws cloudfront create-invalidation …` |
 | Re-run compliance for one site / a past day | `--payload '{"site_id":"dolafon-house","now":"2026-09-01T03:00:00Z"}'` |
 | Watch ingest | `aws logs tail /aws/lambda/el-ingest --follow --region eu-west-1` |
-| Watch the scheduler decide | `aws logs tail /aws/lambda/el-scheduler --since 1h --region eu-west-1` |
+| Watch the job runner | `aws logs tail /aws/lambda/el-scheduler --since 1h --region eu-west-1` |
 | Rotate a source token | `python3 scripts/register-source.py tti-beacon --rotate` |
 | Machine access (GIS, exports) | `python3 scripts/create-api-key.py` — `/svc/*` is wired at the gateway; route handlers for it are not in this drop |
 

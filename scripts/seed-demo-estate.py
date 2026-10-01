@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-seed-demo-estate.py — load the Beacon demo estate into the live stack.
+seed-demo-estate.py — load the Clearway demo estate into the live stack.
 
 Writes to el_config (tenant, sites, luminaires) and el_records (TEST, FAULT,
 LATEST per luminaire) so the console is populated the moment it's deployed,
@@ -162,7 +162,7 @@ def main():
         for sid, name, town, pc, lat, lng, count, kind in SITES:
             site = {"pk": f"TENANT#{TENANT}", "sk": f"SITE#{sid}", "entity_type": "site", "site_id": sid, "tenant_id": TENANT, "name": name, "kind": kind, "demo": True,
                     "address": {"line1": name, "town": town, "postcode": pc}, "gps": {"lat": D(lat), "lng": D(lng)}, "tz": "Europe/London",
-                    "test_schedule": {"enabled": True, "function": {"day_of_month": 1 + len(sid) % 20, "time": "02:00"}, "duration": {"month": 3 + len(sid) % 9, "day_of_month": 12, "time": "01:00"}, "stagger_window_min": 60}}
+                    "test_schedule": {"function": {"day_of_month": 1 + len(sid) % 20}}}  # only places the simulated automatic tests
             cw.put_item(Item=site)
             for i in range(count):
                 lum, rs = build(site, i, STORY.get(sid, {}))

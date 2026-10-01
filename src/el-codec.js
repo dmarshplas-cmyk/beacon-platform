@@ -5,7 +5,7 @@
  *   decode(bytes, fPort) → { events: [canonicalEvent…], raw: {…} }
  *   encode(command)      → { fPort, hex } | null
  *
- * Canonical event (what the rest of Beacon consumes):
+ * Canonical event (what the rest of Clearway consumes):
  *   { type, ...fields }  where type ∈
  *     status | test-start | test-finished | mains-failure | mains-restored |
  *     battery-failure | hardware-failure | shutdown

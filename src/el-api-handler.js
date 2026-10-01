@@ -12,7 +12,9 @@
  *  POST /api/faults/close   { luminaire_id, opened_at, note, action }
  *  POST /api/tests/manual   { luminaire_id, test_type, result, at, note }   — manual logbook entry
  *  POST /api/control/test   { luminaire_id, test_type }                    — run a test now
- *  POST /api/sites/{id}/schedule { test_schedule }
+ *  GET  /api/jobs                               scheduled/recent test jobs
+ *  POST /api/jobs           { test_type, scope: {site_id|luminaire_id}, run_at, stagger_window_min, note }
+ *  POST /api/jobs/cancel    { job_id }
  *  GET  /api/reports/logbook?site_id=&from=&to=   CSV logbook (PDF renderer is a later drop)
  *  POST /api/admin/import/preview|commit          (Pulse import, luminaire rows)
  *
@@ -22,7 +24,8 @@
 const db = require("./dynamodb");
 const ctl = require("./control-lib");
 const codecs = require("./el-codec");
-const S = require("./el-schedule-lib");
+const J = require("./el-jobs-lib");
+const crypto = require("crypto");
 const { tenantFromClaims, allowed, parseLimit, publicItem, toCsv } = require("./api-lib");
 
 const log = (msg, extra) => console.log(`[api] ${msg}${extra !== undefined ? " " + JSON.stringify(extra) : ""}`);
@@ -35,7 +38,9 @@ const ROUTES = [
   { m: "GET", re: /^\/api\/portfolio\/?$/, kind: "portfolio" },
   { m: "GET", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/?$/, kind: "site" },
   { m: "GET", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/days\/?$/, kind: "site_days" },
-  { m: "POST", re: /^\/api\/sites\/([A-Za-z0-9_-]+)\/schedule\/?$/, kind: "site_schedule" },
+  { m: "GET", re: /^\/api\/jobs\/?$/, kind: "jobs" },
+  { m: "POST", re: /^\/api\/jobs\/?$/, kind: "job_create" },
+  { m: "POST", re: /^\/api\/jobs\/cancel\/?$/, kind: "job_cancel" },
   { m: "GET", re: /^\/api\/luminaires\/([A-Za-z0-9_-]+)\/?$/, kind: "luminaire" },
   { m: "GET", re: /^\/api\/luminaires\/([A-Za-z0-9_-]+)\/events\/?$/, kind: "luminaire_events" },
   { m: "GET", re: /^\/api\/exceptions\/?$/, kind: "exceptions" },
@@ -81,7 +86,7 @@ exports.handler = async (event = {}) => {
     switch (route.kind) {
       case "portfolio": {
         const states = await Promise.all(mySites.map((s) => db.getRollup(recordsTable, `SITE#${s.site_id}`, "STATE")));
-        const sites = mySites.map((s, i) => ({ ...publicItem(states[i] || {}), site_id: s.site_id, name: s.name, address: s.address || null, gps: s.gps || null, tz: s.tz, next_runs: S.nextRuns(s) }));
+        const sites = mySites.map((s, i) => ({ ...publicItem(states[i] || {}), site_id: s.site_id, name: s.name, address: s.address || null, gps: s.gps || null, tz: s.tz }));
         const tenants = tenant === "*" ? [...new Set(mySites.map((s) => s.tenant_id))] : [tenant];
         const totals = (await Promise.all(tenants.map((t) => db.getRollup(recordsTable, `TENANT#${t}`, "STATE")))).filter(Boolean).map(publicItem);
         return respond(200, { tenant, totals, sites });
@@ -89,26 +94,46 @@ exports.handler = async (event = {}) => {
       case "site": {
         const site = siteOk(route.id); if (!site) return respond(404, { error: "not found" });
         const lums = cfg.lums.filter((l) => l.site_id === site.site_id && l.enabled !== false);
-        const [state, states] = await Promise.all([
+        const [state, states, latests, jobs] = await Promise.all([
           db.getRollup(recordsTable, `SITE#${site.site_id}`, "STATE"),
           Promise.all(lums.map((l) => db.getRollup(recordsTable, `LUMINAIRE#${l.luminaire_id}`, "STATE"))),
+          Promise.all(lums.map((l) => db.getRollup(recordsTable, `LUMINAIRE#${l.luminaire_id}`, "LATEST"))),
+          db.queryByPrefix(recordsTable, "JOBS", "", { limit: 200, desc: true }),
         ]);
-        return respond(200, { site: publicItem(site), state: publicItem(state || {}), next_runs: S.nextRuns(site),
-          luminaires: lums.map((l, i) => ({ ...publicItem(l), state: publicItem(states[i] || {}) })) });
+        const siteJobs = jobs.filter((j) => j.scope?.site_id === site.site_id || lums.some((l) => l.luminaire_id === j.scope?.luminaire_id)).map(publicItem);
+        return respond(200, { site: publicItem(site), state: publicItem(state || {}), jobs: siteJobs,
+          luminaires: lums.map((l, i) => ({ ...publicItem(l), state: publicItem(states[i] || {}), device_next: J.deviceNext(latests[i], l) })) });
       }
       case "site_days": {
         const site = siteOk(route.id); if (!site) return respond(404, { error: "not found" });
         const days = await db.queryByPrefix(recordsTable, `SITE#${site.site_id}`, "DAY#", { limit: parseLimit(qs, 90, 400), desc: true });
         return respond(200, { site_id: site.site_id, days: days.map(publicItem) });
       }
-      case "site_schedule": {
-        const site = siteOk(route.id); if (!site) return respond(404, { error: "not found" });
-        const v = S.validateTestSchedule(parseBody(event).test_schedule);
+      case "jobs": {
+        const jobs = (await db.queryByPrefix(recordsTable, "JOBS", "", { limit: 300, desc: true })).filter((j) => allowed(tenant, j.tenant_id)).map(publicItem);
+        return respond(200, { jobs });
+      }
+      case "job_create": {
+        const b = parseBody(event);
+        const v = J.validateJob(b);
         if (!v.ok) return respond(400, { error: v.reason });
-        const item = await db.getConfigItem(configTable, site.pk, site.sk);
-        await db.putConfigItem(configTable, { ...item, test_schedule: v.schedule });
-        cache.at = 0;
-        return respond(200, { site_id: site.site_id, test_schedule: v.schedule, next_runs: S.nextRuns({ ...site, test_schedule: v.schedule }) });
+        const scopeOk = v.job.scope.site_id ? siteOk(v.job.scope.site_id) : lumOk(v.job.scope.luminaire_id);
+        if (!scopeOk) return respond(404, { error: "scope not found" });
+        const job_id = crypto.randomUUID().slice(0, 8);
+        const item = { pk: "JOBS", sk: `${v.job.run_at}#${job_id}`, entity_type: "job", job_id, tenant_id: scopeOk.tenant_id, ...v.job,
+          scope_name: scopeOk.name, status: "pending", created_by: who, created_at: new Date().toISOString(), dispatched: [], held: [], skipped: [] };
+        await db.putRollup(recordsTable, item);
+        return respond(200, { job: publicItem(item) });
+      }
+      case "job_cancel": {
+        const b = parseBody(event);
+        const jobs = await db.queryByPrefix(recordsTable, "JOBS", "", { limit: 300, desc: true });
+        const job = jobs.find((j) => j.job_id === String(b.job_id || "") && allowed(tenant, j.tenant_id));
+        if (!job) return respond(404, { error: "job not found" });
+        if (job.status === "done" || job.status === "cancelled") return respond(400, { error: `job already ${job.status}` });
+        const upd = { ...job, status: "cancelled", cancelled_by: who, cancelled_at: new Date().toISOString() };
+        await db.putRollup(recordsTable, upd);
+        return respond(200, { job: publicItem(upd) });
       }
       case "luminaire": {
         const lum = lumOk(route.id); if (!lum) return respond(404, { error: "not found" });

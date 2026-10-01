@@ -1,16 +1,18 @@
 /* App.jsx — shell + hash router.
-   #/ · #/site/{id} · #/site/{id}/schedule · #/luminaire/{id} · #/exceptions · #/reports?site= */
+   #/ · #/site/{id} · #/site/{id}/job · #/luminaire/{id} · #/luminaire/{id}/job · #/jobs · #/exceptions · #/reports?site= */
 import React, { useEffect, useState } from "react";
 import { loadConfig, isAuthed, signOut, getConfig } from "./api.js";
 import { Login } from "./auth.jsx";
-import { Estate, Site, ScheduleEditor, Luminaire, Exceptions, Reports } from "./views.jsx";
+import { Estate, Site, ScheduleJob, Jobs, Luminaire, Exceptions, Reports } from "./views.jsx";
 
 function parseHash() {
   const raw = window.location.hash.replace(/^#\/?/, "");
   const [path, query] = raw.split("?");
   const parts = path.split("/").filter(Boolean);
   const q = new URLSearchParams(query || "");
-  if (parts[0] === "site" && parts[1] && parts[2] === "schedule") return { view: "schedule", siteId: parts[1] };
+  if (parts[0] === "site" && parts[1] && parts[2] === "job") return { view: "job", siteId: parts[1] };
+  if (parts[0] === "luminaire" && parts[1] && parts[2] === "job") return { view: "job", luminaireId: parts[1] };
+  if (parts[0] === "jobs") return { view: "jobs" };
   if (parts[0] === "site" && parts[1]) return { view: "site", siteId: parts[1] };
   if (parts[0] === "luminaire" && parts[1]) return { view: "luminaire", luminaireId: parts[1] };
   if (parts[0] === "exceptions") return { view: "exceptions" };
@@ -37,7 +39,7 @@ export default function App() {
   if (!ready) return <div className="loading">Starting…</div>;
   if (!authed) return <Login />;
   const cfg = getConfig() || {};
-  const product = cfg.brand || "Beacon";
+  const product = cfg.brand || "Clearway";
   const nav = (v) => (route.view === v ? "navlink on" : "navlink");
 
   return (
@@ -50,6 +52,7 @@ export default function App() {
         <nav className="nav">
           <a className={nav("estate")} href="#/">Estate</a>
           <a className={nav("exceptions")} href="#/exceptions">Needs attention</a>
+          <a className={nav("jobs")} href="#/jobs">Manual tests</a>
           <a className={nav("reports")} href="#/reports">Logbook</a>
         </nav>
         <span className="window-label muted">{cfg.demo ? "Demo estate — simulated data" : "BS 5266-1 · automatic testing to BS EN 62034"}</span>
@@ -58,7 +61,8 @@ export default function App() {
       <main className="main">
         {route.view === "estate" && <Estate />}
         {route.view === "site" && <Site siteId={route.siteId} />}
-        {route.view === "schedule" && <ScheduleEditor siteId={route.siteId} />}
+        {route.view === "job" && <ScheduleJob key={route.luminaireId || route.siteId} siteId={route.siteId} luminaireId={route.luminaireId} />}
+        {route.view === "jobs" && <Jobs />}
         {route.view === "luminaire" && <Luminaire luminaireId={route.luminaireId} />}
         {route.view === "exceptions" && <Exceptions />}
         {route.view === "reports" && <Reports presetSite={route.site} />}

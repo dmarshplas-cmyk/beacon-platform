@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-create-api-key.py — mint, list, revoke Beacon service API keys (pk_live_...).
+create-api-key.py — mint, list, revoke Clearway service API keys (pk_live_...).
 
   python3 scripts/create-api-key.py --tenant '*' --label "GIS team"
   python3 scripts/create-api-key.py --list

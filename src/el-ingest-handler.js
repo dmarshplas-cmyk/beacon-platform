@@ -1,5 +1,5 @@
 /**
- * el-ingest-handler.js — generic secure webhook ingest for Beacon.
+ * el-ingest-handler.js — generic secure webhook ingest for Clearway.
  * Auth, registry cache and quarantine are Pulse's ingest-handler unchanged;
  * what differs is what happens after normalisation:
  *

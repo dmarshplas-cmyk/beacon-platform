@@ -98,7 +98,7 @@ export function Login() {
       }>
         <img className="mark" src="./nxzen-mark.png" alt="" />
         <span className="brand"><img className="logo" src="./nxzen-wordmark.png" alt="nXzen" /></span>
-        <div className="product-name">{cfg.brand || "Beacon"}</div>
+        <div className="product-name">{cfg.brand || "Clearway"}</div>
         <p className="sub tagline">{tagline}</p>
 
         {step === "signin" && (<>

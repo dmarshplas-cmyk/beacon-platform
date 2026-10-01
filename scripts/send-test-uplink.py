@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-send-test-uplink.py — post HBI sample frames to the Beacon ingest endpoint,
+send-test-uplink.py — post HBI sample frames to the Clearway ingest endpoint,
 wrapped exactly as a The Things Stack v3 webhook would send them. Proves
 auth → decode → event → record end to end without a luminaire in hand.
 

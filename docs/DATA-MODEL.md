@@ -1,4 +1,4 @@
-# Beacon data model — item shapes
+# Clearway data model — item shapes
 
 ```jsonc
 // el_config
@@ -7,9 +7,7 @@
 { "pk": "TENANT#cambrian", "sk": "SITE#dolafon-house", "entity_type": "site",
   "site_id": "dolafon-house", "tenant_id": "cambrian", "name": "Dolafon House", "kind": "high-rise",
   "address": { "line1": "Dolafon House", "town": "Newtown", "postcode": "SY16 1DU" }, "gps": { "lat": 52.5111, "lng": -3.3092 },
-  "tz": "Europe/London",
-  "test_schedule": { "enabled": true, "function": { "day_of_month": 14, "time": "02:00" },
-                     "duration": { "month": 7, "day_of_month": 12, "time": "01:00" }, "stagger_window_min": 60 } }
+  "tz": "Europe/London" }
 
 { "pk": "SITE#dolafon-house", "sk": "LUMINAIRE#dolafon-house-el-03", "entity_type": "luminaire",
   "luminaire_id": "dolafon-house-el-03", "site_id": "dolafon-house", "tenant_id": "cambrian",
@@ -17,7 +15,7 @@
   "rated_minutes": 180, "install_date": "2025-04-13", "battery_date": "2025-07-17",
   "control": { "enabled": true, "app_id": "beacon-el", "device_id": "el-03", "f_port": 1,
                "commands": { "run_function_test": "<hex from HBI spec>", "run_duration_test": "<hex>" } },
-  "last_dispatch": { "test_type": "function", "occurrence": "function:2026-09", "at": "2026-09-14T01:03:00Z" } }
+  "function_interval_days": 31, "duration_interval_days": 365 }   // optional overrides of el-rules DEFAULTS
 
 { "pk": "SOURCE#tti-beacon", "sk": "META", "entity_type": "source", "source_id": "tti-beacon", "format": "tti", "codec": "hbi", "secret_hash": "…", "enabled": true }
 { "pk": "DOWNLINK#beacon-el", "sk": "META", "entity_type": "downlink_app", "app_id": "beacon-el", "base_url": "https://eu1.cloud.thethings.industries", "api_key": "…" }
@@ -40,6 +38,11 @@
   "summary": "Battery exhausted before rated duration", "severity": "alert",
   "status": "closed", "opened_at": "…", "acked_at": "…", "acked_by": "d.marsh", "ack_note": "Battery ordered",
   "closed_at": "…", "closed_by": "j.pryce", "close_note": "New pack fitted, duration test re-run", "remedial_action": "Battery replaced" }
+
+{ "pk": "JOBS", "sk": "2026-11-02T01:00:00.000Z#a1b2c3d4", "entity_type": "job", "job_id": "a1b2c3d4", "tenant_id": "cambrian",
+  "test_type": "duration", "scope": { "site_id": "dolafon-house" }, "scope_name": "Dolafon House", "run_at": "2026-11-02T01:00:00.000Z",
+  "stagger_window_min": 60, "note": "Re-test after battery swaps", "status": "pending", "created_by": "d.marsh", "created_at": "…",
+  "dispatched": [], "held": [], "skipped": [] }   // status: pending → running → done | cancelled
 
 { "pk": "LUMINAIRE#…", "sk": "LATEST", "entity_type": "latest", "…": "last event, overwritten" }
 { "pk": "LUMINAIRE#…", "sk": "STATE",  "entity_type": "state",  "…": "el-rules.luminaireState(), daily" }

@@ -1,4 +1,4 @@
-# nXzen Beacon
+# nXzen Clearway
 
 **Every fitting. Every test. On record.**
 
@@ -21,11 +21,11 @@ tied to a fitting.
 | `src/el-rules.js` | Pass/fail derivation, faults, due/overdue, luminaire + site state, month grids, hold-off, stagger. 19 tests. |
 | `src/el-ingest-handler.js` | Webhook ingest (Pulse auth/quarantine) → `el_events` + derived TEST/FAULT/LATEST records. |
 | `src/el-compliance-handler.js` | Daily: luminaire STATE, site DAY/STATE, tenant STATE, comms faults, SNS digest. |
-| `src/el-schedule-lib.js` + `el-scheduler-handler.js` | Monthly/annual test windows, stagger, mains hold-off, one-shot downlink dispatch. 7 tests. |
-| `src/el-api-handler.js` | Tenant-scoped API: portfolio, site, luminaire, exceptions, ack/close, manual entry, run test, schedule, CSV logbook. |
+| `src/el-jobs-lib.js` + `el-scheduler-handler.js` | Manual test jobs only — luminaires run their own monthly/annual cycle. Stagger, mains hold-off, dispatch, job lifecycle. 6 tests. |
+| `src/el-api-handler.js` | Tenant-scoped API: portfolio, site, luminaire, exceptions, ack/close, manual entry, run-now, jobs, CSV logbook. |
 | `src/dynamodb.js` `api-lib.js` `control-lib.js` `import-lib.js` | Byte-identical to Pulse. Keep them that way. |
 | `infra/template.yaml` | Pulse stack renamed: `el_config` / `el_events` / `el_records`, `el-ingest` / `el-api` / `el-compliance` / `el-scheduler`, Cognito `el-users`. |
-| `dashboard/` | Vite/React console: Estate (luminaire wall), Site, Luminaire, Needs attention, Logbook, schedule editor. Demo mode built in. |
+| `dashboard/` | Vite/React console: Estate (luminaire wall), Site, Luminaire, Needs attention, Manual tests, Logbook. Demo mode built in. |
 | `scripts/` | `seed-demo-estate.py`, `send-test-uplink.py`, `register-source.py`, `create-user.py`, `create-api-key.py`, `build-demo.mjs`. |
 
 ## Run the tests
@@ -33,7 +33,7 @@ tied to a fitting.
 ```bash
 node test/test-el-codec.js
 node test/test-el-rules.js
-node test/test-el-schedule-lib.js
+node test/test-el-jobs-lib.js
 node test/test-control-lib.js
 node test/test-api-lib.js
 ```
@@ -57,10 +57,12 @@ Full copy-paste session in **[docs/RUNBOOK-DEPLOY.md](docs/RUNBOOK-DEPLOY.md)**.
 aws cloudformation deploy --template-file infra/template.yaml --stack-name beacon --capabilities CAPABILITY_NAMED_IAM --region eu-west-1
 cd src
 zip -j ~/ingest.zip el-ingest-handler.js el-adapters.js el-codec.js el-rules.js dynamodb.js && aws lambda update-function-code --function-name el-ingest --zip-file fileb://~/ingest.zip
-zip -j ~/api.zip el-api-handler.js el-codec.js el-schedule-lib.js time-local.js el-rules.js control-lib.js api-lib.js dynamodb.js && aws lambda update-function-code --function-name el-api --zip-file fileb://~/api.zip
+zip -j ~/api.zip el-api-handler.js el-codec.js el-jobs-lib.js el-rules.js control-lib.js api-lib.js dynamodb.js && aws lambda update-function-code --function-name el-api --zip-file fileb://~/api.zip
 zip -j ~/comp.zip el-compliance-handler.js el-rules.js dynamodb.js && aws lambda update-function-code --function-name el-compliance --zip-file fileb://~/comp.zip
-zip -j ~/sched.zip el-scheduler-handler.js el-schedule-lib.js time-local.js el-rules.js el-codec.js control-lib.js dynamodb.js && aws lambda update-function-code --function-name el-scheduler --zip-file fileb://~/sched.zip
+zip -j ~/sched.zip el-scheduler-handler.js el-jobs-lib.js el-rules.js el-codec.js control-lib.js dynamodb.js && aws lambda update-function-code --function-name el-scheduler --zip-file fileb://~/sched.zip
 ```
+
+`dashboard/public/config.json` is git-ignored (it carries the deployed API endpoint and Cognito client ID); step 7 of the runbook writes it from the stack outputs, and `config.example.json` shows the shape.
 
 Register a TTI source with `scripts/register-source.py` (format `tti`, codec `hbi`),
 point the TTI webhook at `POST {IngestEndpoint}/ingest/{source}`, and add
@@ -68,16 +70,16 @@ luminaire items to `el_config` (see `docs/DATA-MODEL.md`).
 
 ## Data model (three tables, Pulse shape)
 
-- **el_config** — `TENANT#`, `SITE#` (address, gps, tz, `test_schedule`), `LUMINAIRE#` (`dev_eui`, `location`, `rated_minutes`, `install_date`, `battery_date`, `control`), `SOURCE#`, `DOWNLINK#`, `APIKEY#`.
+- **el_config** — `TENANT#`, `SITE#` (address, gps, tz), `LUMINAIRE#` (`dev_eui`, `location`, `rated_minutes`, `install_date`, `battery_date`, `control`), `SOURCE#`, `DOWNLINK#`, `APIKEY#`.
 - **el_events** — every decoded uplink. pk `circuit_id` (= luminaire_id, kept so `dynamodb.js` is untouched), sk `ts`. 400-day TTL.
 - **el_records** — append-only, no TTL:
   `LUMINAIRE#id / TEST#ts · FAULT#ts · DISPATCH#ts · LATEST · STATE`
-  `SITE#id / DAY#yyyy-mm-dd · STATE`   `TENANT#id / STATE`
+  `SITE#id / DAY#yyyy-mm-dd · STATE`   `TENANT#id / STATE`   `JOBS / <run_at>#<id>`
 
 ## Before a paying customer
 
-- **HBI downlink spec.** Everything is wired for `run_function_test` / `run_duration_test`; the bytes live in `luminaire.control.commands`. Without them, "Run now" and the scheduler log a skip.
+- **HBI downlink spec.** Luminaires self-test; downlinks are only for manual jobs and "run now". Everything is wired for `run_function_test` / `run_duration_test`; the bytes live in `luminaire.control.commands`. Without them, jobs record a skip per fitting.
 - **Units.** `test_duration_min`, `outage_min`, `last_duration_test_min` are assumed minutes from the sample frames. Confirm with HBI. `device_status` nibble and `l1/l2` bits are unmapped.
 - **GSI on `entity_type`** in `el_config` before ~3,000 luminaires; ingest and API scan on cache miss (Pulse's posture).
 - **PDF logbook / certificate.** CSV ships now; the branded PDF (BS 5266-1 Annex-style) is the next drop.
-- **Wording.** Beacon "records the results of automatic testing to BS EN 62034 and supports compliance with BS 5266-1". It does not certify. Keep it that way in every deck.
+- **Wording.** Clearway "records the results of automatic testing to BS EN 62034 and supports compliance with BS 5266-1". It does not certify. Keep it that way in every deck.

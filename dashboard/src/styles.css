@@ -277,7 +277,7 @@ button { font: inherit; }
 .scroll-x { overflow-x: auto; }
 
 /* duration bar */
-.dbar { position: relative; height: 12px; width: 150px; background: var(--ink-2); border-radius: 2px; overflow: visible; }
+.dbar { position: relative; height: 12px; width: 120px; margin-right: 62px; background: var(--ink-2); border-radius: 2px; overflow: visible; }
 .dbar-fill { height: 100%; border-radius: 2px; background: var(--ok); }
 .dbar-fill.pass-marginal { background: var(--warn); }
 .dbar-fill.fail { background: var(--alert); }
@@ -363,3 +363,13 @@ ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
 }
 
 .nowrap { white-space: nowrap; }
+
+/* jobs */
+.jobs { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.job { border: 1px solid var(--line-soft); border-left: 3px solid var(--line); border-radius: var(--r); padding: 8px 10px; background: var(--ink-0); font-size: 13px; }
+.job.pending { border-left-color: var(--warn); }
+.job.running { border-left-color: var(--cyan); }
+.job.done { opacity: .7; }
+.job.cancelled { opacity: .5; }
+.job-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.job-head .chip { margin-left: auto; }

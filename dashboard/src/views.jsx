@@ -1,4 +1,4 @@
-/* views.jsx — Beacon console. Estate (luminaire wall) · Site · Luminaire · Exceptions · Reports */
+/* views.jsx — Clearway console. Estate (luminaire wall) · Site · Luminaire · Exceptions · Reports */
 import React, { useEffect, useMemo, useState } from "react";
 import * as A from "./api.js";
 import { Panel, Led } from "./ui.jsx";
@@ -12,7 +12,7 @@ function useApi(path, deps = []) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
-    setErr(null);
+    setErr(null); setData(null);
     A.api(path).then((d) => live && setData(d), (e) => live && setErr(e.message));
     return () => { live = false; };
   }, [path, tick, ...deps]);
@@ -57,8 +57,6 @@ export function Estate() {
   if (!data) return <div className="loading">Loading estate…</div>;
   const t = data.totals[0] || {};
   const sites = [...data.sites].sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
-  const nextTest = sites.map((s) => s.next_runs?.function).filter(Boolean).sort()[0];
-  const nextDuration = sites.map((s) => s.next_runs?.duration).filter(Boolean).sort()[0];
   const year = new Date().getFullYear();
 
   return (
@@ -73,8 +71,7 @@ export function Estate() {
           <Kpi label="Overdue tests" value={t.overdue} tone={t.overdue ? "warn" : "ok"} />
           <Kpi label="Failed tests" value={t.failed} tone={t.failed ? "alert" : "ok"} />
           <Kpi label="Open faults" value={t.open_faults} tone={t.open_faults ? "warn" : "ok"} />
-          <Kpi label="Next function test" value={nextTest ? A.fmtDate(nextTest) : "—"} small />
-          <Kpi label="Next duration test" value={nextDuration ? A.fmtDate(nextDuration) : "—"} small />
+          <Kpi label="Silent fittings" value={sites.reduce((a, s) => a + (s.stale || 0), 0)} tone={sites.some((s) => s.stale) ? "warn" : "ok"} />
         </div>
       </div>
 
@@ -91,7 +88,7 @@ export function Estate() {
 
       <Panel title={`Sites — monthly function tests ${year}`}>
         <table className="tbl sites-tbl">
-          <thead><tr><th className="led-col"></th><th>Site</th><th className="r">Fittings</th><th className="r">Compliant</th><th>Function tests</th><th className="r">Overdue</th><th className="r">Faults</th><th>Next test</th></tr></thead>
+          <thead><tr><th className="led-col"></th><th>Site</th><th className="r">Fittings</th><th className="r">Compliant</th><th>Function tests</th><th className="r">Overdue</th><th className="r">Faults</th><th className="r">Silent</th></tr></thead>
           <tbody>
             {sites.map((s) => (
               <tr key={s.site_id} className="rowlink" onClick={() => go(`/site/${s.site_id}`)}>
@@ -102,7 +99,7 @@ export function Estate() {
                 <td><MonthStrip grid={s.month_grid} /></td>
                 <td className={`r num ${s.overdue ? "warn-text" : ""}`}>{s.overdue || "—"}</td>
                 <td className={`r num ${s.open_faults ? "warn-text" : ""}`}>{s.open_faults || "—"}</td>
-                <td className="muted">{A.fmtDate(s.next_runs?.function)}</td>
+                <td className={`r num ${s.stale ? "warn-text" : ""}`}>{s.stale || "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -194,7 +191,7 @@ export function Site({ siteId }) {
   const [running, setRunning] = useState(null);
   if (err) return <div className="loading">{err}</div>;
   if (!data) return <div className="loading">Loading site…</div>;
-  const { site, state, luminaires, next_runs } = data;
+  const { site, state, luminaires, jobs = [] } = data;
   const lums = [...luminaires].sort((a, b) => rank(b.state) - rank(a.state) || a.name.localeCompare(b.name));
   const year = new Date().getFullYear();
 
@@ -226,26 +223,22 @@ export function Site({ siteId }) {
           <MonthStrip grid={state.month_grid} year={year} size="l" />
           <div className="muted small-note">A month is green when every fitting passed a function test in it.</div>
         </Panel>
-        <Panel title="Test schedule" right={<a href={`#/site/${siteId}/schedule`}>Change</a>}>
-          <div className="sched">
-            <div><span className="muted">Monthly function test</span><br /><strong>{ordinal(site.test_schedule?.function?.day_of_month)} of the month, {site.test_schedule?.function?.time}</strong><br /><span className="muted">next {A.fmtDate(next_runs?.function)}</span></div>
-            <div><span className="muted">Annual duration test</span><br /><strong>{ordinal(site.test_schedule?.duration?.day_of_month)} {monthName(site.test_schedule?.duration?.month)}, {site.test_schedule?.duration?.time}</strong><br /><span className="muted">next {A.fmtDate(next_runs?.duration)}</span></div>
-            <div className="muted small-note">Fittings are staggered over {site.test_schedule?.stagger_window_min} min so the site is never dark all at once. Tests are held back for 24 h after a real mains outage.</div>
-          </div>
+        <Panel title="Automatic testing" right={<span className="muted">BS EN 62034</span>}>
+          <AutoTesting luminaires={luminaires} />
         </Panel>
-        <Panel title="Run now">
-          <div className="control-copy muted">Sends a test command to every fitting on this site. Use outside occupied hours for a duration test — fittings need 24 h to recharge afterwards.</div>
+        <Panel title="Manual tests" right={<a href={`#/site/${siteId}/job`}>Schedule a test</a>}>
+          <div className="control-copy muted">Fittings test themselves. Use this when you need a test outside the cycle — after a battery swap, before an inspection, or to re-run a site after an outage.</div>
+          <JobsList jobs={jobs} compact onChange={reload} />
           <div className="control-buttons">
-            <button className="btn" disabled={!!running} onClick={() => runAll("function")}>{running === "function" ? "Sending…" : "Run function test"}</button>
-            <button className="btn ghost" disabled={!!running} onClick={() => runAll("duration")}>{running === "duration" ? "Sending…" : "Run duration test"}</button>
+            <button className="btn ghost" disabled={!!running} onClick={() => runAll("function")}>{running === "function" ? "Sending…" : "Run function test now"}</button>
+            <a className="btn ghost" href={`#/reports?site=${siteId}`}>Export logbook</a>
           </div>
-          <div className="control-buttons"><a className="btn ghost" href={`#/reports?site=${siteId}`}>Export logbook</a></div>
         </Panel>
       </div>
 
       <Panel title="Luminaires">
         <table className="tbl lum-tbl">
-          <thead><tr><th className="led-col"></th><th>Fitting</th><th>Location</th><th>Function test</th><th>Duration test</th><th>Achieved</th><th className="r">Battery</th><th>Last report</th></tr></thead>
+          <thead><tr><th className="led-col"></th><th>Fitting</th><th>Location</th><th>Function test</th><th>Duration test</th><th>Achieved</th><th>Next auto</th><th className="r">Battery</th><th>Last report</th></tr></thead>
           <tbody>
             {lums.map((l) => {
               const s = l.state;
@@ -257,6 +250,7 @@ export function Site({ siteId }) {
                   <td className={cls(s.function_test?.status)}>{A.fmtDate(s.function_test?.last?.at)}<span className="muted"> · {A.dueText(s.function_test)}</span></td>
                   <td className={cls(s.duration_test?.status, s.duration_test?.last?.result)}>{A.fmtDate(s.duration_test?.last?.at)}<span className="muted"> · {A.dueText(s.duration_test)}</span></td>
                   <td><DurationBar achieved={s.duration_test?.last?.achieved_min} rated={s.duration_test?.rated_min} result={s.duration_test?.last?.result} /></td>
+                  <td className="muted nowrap">{nextAutoText(l.device_next)}</td>
                   <td className={`r num ${s.battery_low ? "warn-text" : ""}`}>{A.fmtMv(s.battery_mv)}</td>
                   <td className={s.comms === "stale" ? "warn-text" : "muted"}>{A.ago(s.last_seen)}</td>
                 </tr>
@@ -273,34 +267,87 @@ const cls = (due, result) => (result === "fail" ? "alert-text" : due === "overdu
 const ordinal = (n) => (n ? `${n}${["th", "st", "nd", "rd"][(n % 10 > 3 || Math.floor(n % 100 / 10) === 1) ? 0 : n % 10]}` : "—");
 const monthName = (m) => (m ? ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m - 1] : "—");
 
-/* ---------- Schedule editor ---------- */
-export function ScheduleEditor({ siteId }) {
-  const { data, err } = useApi(`/api/sites/${siteId}`);
-  const [form, setForm] = useState(null);
-  const [saved, setSaved] = useState(null);
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { if (data && !form) setForm(JSON.parse(JSON.stringify(data.site.test_schedule || { enabled: true, function: { day_of_month: 1, time: "02:00" }, duration: { month: 3, day_of_month: 15, time: "01:00" }, stagger_window_min: 60 }))); }, [data]);
+/* ---------- Automatic testing summary + manual jobs ---------- */
+
+const nextAutoText = (d) => (!d || d.function_in_days == null ? "—" : d.function_in_days === 0 ? "function due" : `fn in ${d.function_in_days} d${d.duration_in_days != null ? ` · dur in ${d.duration_in_days} d` : ""}`);
+
+function AutoTesting({ luminaires }) {
+  const fn = luminaires.map((l) => l.device_next?.function_in_days).filter((x) => x != null);
+  const du = luminaires.map((l) => l.device_next?.duration_in_days).filter((x) => x != null);
+  const soonest = (arr) => (arr.length ? Math.min(...arr) : null);
+  const within = (arr, d) => arr.filter((x) => x <= d).length;
+  return (
+    <div className="sched">
+      <div><span className="muted">Monthly function test</span><br /><strong>{within(fn, 7)} fittings due within 7 days</strong><br /><span className="muted">soonest in {soonest(fn) ?? "—"} d · every fitting runs its own cycle</span></div>
+      <div><span className="muted">Annual duration test</span><br /><strong>{within(du, 30)} fittings due within 30 days</strong><br /><span className="muted">soonest in {soonest(du) ?? "—"} d</span></div>
+      <div className="muted small-note">Each luminaire keeps its own schedule and reports every result. Clearway records them, flags anything overdue, and holds the logbook.</div>
+    </div>
+  );
+}
+
+const JOB_STATUS = { pending: "warn", running: "cyan", done: "", cancelled: "" };
+function JobsList({ jobs, compact, onChange }) {
+  const list = [...jobs].sort((a, b) => (a.run_at < b.run_at ? 1 : -1)).slice(0, compact ? 4 : 50);
+  if (!list.length) return <div className="empty">No manual tests scheduled.</div>;
+  const cancel = async (j) => { await A.apiPost("/api/jobs/cancel", { job_id: j.job_id }); onChange?.(); };
+  return (
+    <div className="jobs">
+      {list.map((j) => (
+        <div key={j.job_id} className={`job ${j.status}`}>
+          <div className="job-head">
+            <strong>{j.test_type === "duration" ? "Duration" : "Function"} test</strong>
+            <span className="muted">{j.scope?.luminaire_id ? `${j.scope_name}` : `${j.scope_name} — whole site`}</span>
+            <span className={`chip ${JOB_STATUS[j.status] || ""}`}>{j.status}</span>
+          </div>
+          <div className="muted small-note">{j.status === "done" ? `Ran ${A.fmtDateTime(j.run_at)} · ${j.dispatched?.length || 0} fittings` : `${A.fmtDateTime(j.run_at)} · staggered over ${j.stagger_window_min} min`}{j.note ? ` · ${j.note}` : ""} · by {j.created_by}</div>
+          {j.status === "pending" && <div className="fault-actions"><button className="btn tiny ghost" onClick={() => cancel(j)}>Cancel</button></div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ScheduleJob({ siteId, luminaireId }) {
+  const path = luminaireId ? `/api/luminaires/${luminaireId}` : `/api/sites/${siteId}`;
+  const { data, err } = useApi(path);
+  const tomorrow = new Date(Date.now() + 86400000); tomorrow.setHours(2, 0, 0, 0);
+  const [f, setF] = useState({ test_type: "function", run_at: tomorrow.toISOString().slice(0, 16), stagger_window_min: 60, note: "" });
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null);
   if (err) return <div className="loading">{err}</div>;
-  if (!data || !form) return <div className="loading">Loading…</div>;
-  const set = (path, v) => setForm((f) => { const n = JSON.parse(JSON.stringify(f)); let o = n; const ks = path.split("."); for (const k of ks.slice(0, -1)) o = o[k]; o[ks.at(-1)] = v; return n; });
-  const save = async () => { setSaving(true); setSaved(null); try { const r = await A.apiPost(`/api/sites/${siteId}/schedule`, { test_schedule: form }); setSaved(`Saved. Next function test ${A.fmtDate(r.next_runs.function)}, next duration test ${A.fmtDate(r.next_runs.duration)}.`); } catch (e) { setSaved(e.message); } finally { setSaving(false); } };
+  if (!data) return <div className="loading">Loading…</div>;
+  const name = luminaireId ? `${data.luminaire.site_name} · ${data.luminaire.name}` : data.site.name;
+  const back = luminaireId ? `#/luminaire/${luminaireId}` : `#/site/${siteId}`;
+  const save = async () => {
+    setBusy(true); setMsg(null);
+    try { const r = await A.apiPost("/api/jobs", { ...f, run_at: new Date(f.run_at).toISOString(), scope: luminaireId ? { luminaire_id: luminaireId } : { site_id: siteId } }); setMsg(`Scheduled for ${A.fmtDateTime(r.job.run_at)}.`); setTimeout(() => go(back.slice(1)), 900); }
+    catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
   return (
     <div className="page narrow">
-      <div className="page-head"><div><a className="back" href={`#/site/${siteId}`}>{data.site.name}</a><h1 className="h1">Test schedule</h1></div></div>
-      <Panel title="Monthly function test">
-        <div className="form-row"><label>Day of month<input type="number" min="1" max="28" value={form.function?.day_of_month ?? ""} onChange={(e) => set("function.day_of_month", Number(e.target.value))} /></label>
-          <label>Time<input type="time" value={form.function?.time ?? ""} onChange={(e) => set("function.time", e.target.value)} /></label></div>
+      <div className="page-head"><div><a className="back" href={back}>{name}</a><h1 className="h1">Schedule a manual test</h1><div className="sub muted">{luminaireId ? "One fitting." : `Every fitting on ${data.site.name}, staggered so the site is never dark at once.`}</div></div></div>
+      <Panel title="Test">
+        <div className="form-row">
+          <label>Type<select value={f.test_type} onChange={(e) => setF({ ...f, test_type: e.target.value })}><option value="function">Function (short)</option><option value="duration">Duration (full rated time)</option></select></label>
+          <label>When<input type="datetime-local" value={f.run_at} onChange={(e) => setF({ ...f, run_at: e.target.value })} /></label>
+          {!luminaireId && <label>Stagger over (min)<input type="number" min="0" max="360" value={f.stagger_window_min} onChange={(e) => setF({ ...f, stagger_window_min: Number(e.target.value) })} /></label>}
+        </div>
+        <div className="form-row"><label>Why (goes in the logbook)<input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. re-test after battery replacement" /></label></div>
+        {f.test_type === "duration" && <div className="muted small-note">Choose a quiet night. Fittings are depleted for up to 24 h afterwards, and a test is held back automatically if a real mains outage happened in the last 24 h.</div>}
+        <div className="control-buttons"><button className="btn" disabled={busy} onClick={save}>{busy ? "Scheduling…" : "Schedule"}</button>{msg && <span className="muted">{msg}</span>}</div>
       </Panel>
-      <Panel title="Annual duration test">
-        <div className="form-row"><label>Month<select value={form.duration?.month ?? 3} onChange={(e) => set("duration.month", Number(e.target.value))}>{Array.from({ length: 12 }, (_, i) => <option key={i} value={i + 1}>{monthName(i + 1)}</option>)}</select></label>
-          <label>Day<input type="number" min="1" max="28" value={form.duration?.day_of_month ?? ""} onChange={(e) => set("duration.day_of_month", Number(e.target.value))} /></label>
-          <label>Time<input type="time" value={form.duration?.time ?? ""} onChange={(e) => set("duration.time", e.target.value)} /></label></div>
-        <div className="muted small-note">Choose a night when the building is at its quietest. Fittings are depleted for up to 24 h afterwards.</div>
-      </Panel>
-      <Panel title="Stagger">
-        <div className="form-row"><label>Spread fittings over (minutes)<input type="number" min="5" max="360" value={form.stagger_window_min ?? 60} onChange={(e) => set("stagger_window_min", Number(e.target.value))} /></label></div>
-      </Panel>
-      <div className="control-buttons"><button className="btn" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save schedule"}</button>{saved && <span className="muted">{saved}</span>}</div>
+    </div>
+  );
+}
+
+/* ---------- Jobs page ---------- */
+export function Jobs() {
+  const { data, err, reload } = useApi("/api/jobs");
+  if (err) return <div className="loading">{err}</div>;
+  if (!data) return <div className="loading">Loading…</div>;
+  return (
+    <div className="page narrow">
+      <div className="page-head"><div><a className="back" href="#/">Estate</a><h1 className="h1">Manual tests</h1><div className="sub muted">Scheduled, running and recent. Fittings run their routine tests on their own.</div></div></div>
+      <Panel title="All jobs"><JobsList jobs={data.jobs} onChange={reload} /></Panel>
     </div>
   );
 }
@@ -354,6 +401,7 @@ export function Luminaire({ luminaireId }) {
           <div className="control-buttons">
             <button className="btn" disabled={!!busy || !l.control_enabled} onClick={() => run("function")}>{busy === "function" ? "Sending…" : "Run function test"}</button>
             <button className="btn ghost" disabled={!!busy || !l.control_enabled} onClick={() => run("duration")}>{busy === "duration" ? "Sending…" : "Run duration test"}</button>
+            <a className="btn ghost" href={`#/luminaire/${l.luminaire_id}/job`}>Schedule a test</a>
             <button className="btn ghost" onClick={() => setManual((m) => !m)}>Add manual entry</button>
           </div>
           {msg && <div className="muted small-note">{msg}</div>}

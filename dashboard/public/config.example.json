@@ -1,0 +1,8 @@
+{
+  "brand": "Clearway",
+  "tagline": "Every fitting. Every test. On record.",
+  "apiBase": "REPLACE_WITH_DataApiEndpoint",
+  "region": "eu-west-1",
+  "userPoolClientId": "REPLACE_WITH_UserPoolClientId",
+  "demo": false
+}

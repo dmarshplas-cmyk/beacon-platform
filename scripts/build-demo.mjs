@@ -13,6 +13,6 @@ html = html.replace(/<script type="module"[^>]*src="\.\/(assets\/[^"]+\.js)"[^>]
   return `<script type="module">${js}</script>`;
 });
 html = html.replace('href="./favicon.png"', `href="${dataUri("favicon.png", "image/png")}"`);
-html = html.replace("<head>", `<head>\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />\n<script>window.__BEACON_CONFIG__={brand:"Beacon",tagline:"Every fitting. Every test. On record.",demo:true};</script>`);
+html = html.replace("<head>", `<head>\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />\n<script>window.__BEACON_CONFIG__={brand:"Clearway",tagline:"Every fitting. Every test. On record.",demo:true};</script>`);
 html = html.replace('<meta name="viewport" content="width=device-width, initial-scale=1.0" />', "");
 process.stdout.write(html);

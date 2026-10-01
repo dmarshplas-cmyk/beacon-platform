@@ -1,4 +1,4 @@
-# nXzen Beacon — architecture
+# nXzen Clearway — architecture
 
 Fork of Pulse (see Pulse ARCHITECTURE.md for the AWS plumbing, which is identical).
 
@@ -16,14 +16,14 @@ graph TD
     COMP["el-compliance λ<br/>daily 03:00 UTC<br/>luminaire STATE · site DAY/STATE · tenant STATE<br/>comms faults · SNS digest"] --> REC
     REC --> COMP
 
-    SCHED["el-scheduler λ<br/>15-min tick<br/>windows · stagger · mains hold-off"] -- "run_function_test / run_duration_test<br/>(control-lib, replace)" --> NS
+    SCHED["el-scheduler λ<br/>15-min tick · manual JOBS only<br/>stagger · mains hold-off"] -- "run_function_test / run_duration_test<br/>(control-lib, replace)" --> NS
     REC --> SCHED
 
     API["el-api λ<br/>tenant-scoped · Cognito JWT"] --> REC
     API -- "run now · ack · close · manual entry" --> REC
     API -- "downlink" --> NS
 
-    DASH["Beacon console<br/>CloudFront + S3 · Vite/React<br/>Estate wall · Site · Luminaire · Queue · Logbook"] --> API
+    DASH["Clearway console<br/>CloudFront + S3 · Vite/React<br/>Estate wall · Site · Luminaire · Queue · Logbook"] --> API
 ```
 
 ## The one idea
@@ -41,8 +41,10 @@ sends lands in `el_events` for audit; `el_records` is what an inspector sees.
   intervals (31 d function, 365 d duration, with grace), and folds it into a
   three-state luminaire status: ok / warn / alert.
 - **Compliance** runs the rules daily so the console never computes.
-- **Scheduler** decides *when* to ask a luminaire to test: site window,
-  stagger, skip after a real outage, one dispatch per occurrence.
+- **Luminaires** own the routine cycle (monthly function, annual duration);
+  the platform never schedules it. The **job runner** only sends what a person
+  asked for — a manual test with stagger and mains hold-off — and records
+  every dispatch.
 - **API** is the only writer of human decisions (ack, close, manual entry).
 
 ## Scale posture

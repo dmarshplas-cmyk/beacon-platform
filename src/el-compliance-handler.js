@@ -92,8 +92,8 @@ exports.handler = async (event = {}) => {
 
   if (attention.length && sns && process.env.ALERTS_TOPIC_ARN) {
     const lines = attention.slice(0, 40).map((a) => `${a.status.toUpperCase().padEnd(5)} ${a.site} — ${a.lum}: function ${a.fn}, duration ${a.du}, open faults ${a.faults}`);
-    const msg = `Beacon — ${attention.length} luminaire(s) need attention (${day})\n\n${lines.join("\n")}${attention.length > 40 ? `\n…and ${attention.length - 40} more` : ""}\n\n${process.env.DASHBOARD_URL || ""}`;
-    try { await sns.client.send(new sns.PublishCommand({ TopicArn: process.env.ALERTS_TOPIC_ARN, Subject: `Beacon: ${attention.length} luminaires need attention`, Message: msg })); }
+    const msg = `Clearway — ${attention.length} luminaire(s) need attention (${day})\n\n${lines.join("\n")}${attention.length > 40 ? `\n…and ${attention.length - 40} more` : ""}\n\n${process.env.DASHBOARD_URL || ""}`;
+    try { await sns.client.send(new sns.PublishCommand({ TopicArn: process.env.ALERTS_TOPIC_ARN, Subject: `Clearway: ${attention.length} luminaires need attention`, Message: msg })); }
     catch (err) { log("digest FAIL", { message: err?.message }); }
   }
 

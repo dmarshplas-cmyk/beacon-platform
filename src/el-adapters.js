@@ -8,7 +8,7 @@
  *
  * Decoding happens HERE from the raw frame (TTI `frm_payload`, ChirpStack
  * `data`) with our own codec, so the vendor JavaScript never has to be
- * installed on the network server and the codec is versioned with Beacon.
+ * installed on the network server and the codec is versioned with Clearway.
  * If a source ships pre-decoded events in `native` format we accept those.
  *
  * SOURCE# item fields used: format (tti|chirpstack|native), codec (default "hbi").
@@ -77,7 +77,7 @@ function fromChirpstack(body, source, errors) {
 }
 
 /**
- * native — Beacon's published format. Either raw frames:
+ * native — Clearway's published format. Either raw frames:
  *   { device_key, frames: [{ ts, f_port, hex | base64 }] }
  * or pre-decoded events:
  *   { device_key, events: [{ ts, type, ...fields }] }

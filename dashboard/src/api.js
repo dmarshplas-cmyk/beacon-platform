@@ -176,7 +176,7 @@ export async function forgotPasswordConfirm(email, code, newPassword) {
 }
 
 export function totpUri(email, secret) {
-  const issuer = encodeURIComponent("nXzen Beacon");
+  const issuer = encodeURIComponent("nXzen Clearway");
   return `otpauth://totp/${issuer}:${encodeURIComponent(email)}?secret=${secret}&issuer=${issuer}`;
 }
 
@@ -256,7 +256,7 @@ export function siteStatus(latest) {
   return "ok";
 }
 
-/* ---------- Beacon formatters ---------- */
+/* ---------- Clearway formatters ---------- */
 export const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 export const fmtDateTime = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 export const fmtMin = (m) => (m === null || m === undefined ? "—" : m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`);

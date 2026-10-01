@@ -8,7 +8,7 @@ wildcard (sees all tenants) — use it for your own NOC login only.
 
 Usage (CloudShell):
   # INVITE a user (Cognito emails them a temporary password; on first sign-in
-  # they set their own password and enrol MFA in the Beacon login — recommended)
+  # they set their own password and enrol MFA in the Clearway login — recommended)
   python3 create-user.py customer@acme.co --tenant acme --invite
 
   # Create with a known password (still walks MFA enrolment at first sign-in)
@@ -85,7 +85,7 @@ def main():
     if args.reset:
         idp.admin_reset_user_password(UserPoolId=pool_id, Username=args.email)
         print(f"Reset code emailed to {args.email}. They complete it via")
-        print("'Forgot password?' on the Beacon sign-in screen.")
+        print("'Forgot password?' on the Clearway sign-in screen.")
         return
     if args.disable:
         idp.admin_disable_user(UserPoolId=pool_id, Username=args.email)

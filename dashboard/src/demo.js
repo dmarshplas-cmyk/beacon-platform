@@ -134,7 +134,7 @@ const YEAR = new Date(NOW).getUTCFullYear();
 const DB = { sites: {}, lums: {}, siteStates: {} };
 for (const [site_id, name, town, postcode, lat, lng, count, kind] of SITES) {
   const site = { site_id, tenant_id: "cambrian", name, kind, address: { line1: name, town, postcode }, gps: { lat, lng }, tz: "Europe/London",
-    test_schedule: { enabled: true, function: { day_of_month: 1 + (site_id.length % 20), time: "02:00" }, duration: { month: 3 + (site_id.length % 9), day_of_month: 12, time: "01:00" }, stagger_window_min: 60 } };
+    test_schedule: { function: { day_of_month: 1 + (site_id.length % 20) } } }; // only used to place the simulated automatic tests
   const story = STORY[site_id] || {};
   const lums = Array.from({ length: count }, (_, i) => buildLuminaire(site, i, story));
   DB.sites[site_id] = site;
@@ -152,12 +152,11 @@ for (const [site_id, name, town, postcode, lat, lng, count, kind] of SITES) {
     status: alerts || overdue || failed ? "alert" : warns || due || stale ? "warn" : "ok", month_grid: grid, computed_at: iso(NOW - 3 * 3600000) };
 }
 
-function nextRuns(site) {
-  const now = new Date(NOW), s = site.test_schedule;
-  const f = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), s.function.day_of_month)); if (f.getTime() < NOW) f.setUTCMonth(f.getUTCMonth() + 1);
-  const d = new Date(Date.UTC(now.getUTCFullYear(), s.duration.month - 1, s.duration.day_of_month)); if (d.getTime() < NOW) d.setUTCFullYear(d.getUTCFullYear() + 1);
-  return { function: `${f.toISOString().slice(0, 10)}T${s.function.time}`, duration: `${d.toISOString().slice(0, 10)}T${s.duration.time}` };
-}
+const JOBS = [
+  { job_id: "a1b2c3d4", tenant_id: "cambrian", test_type: "duration", scope: { site_id: "dolafon-house" }, scope_name: "Dolafon House", run_at: iso(NOW + 9 * DAY + 3600000 * 13), stagger_window_min: 60, note: "Re-test after battery swaps on EL-03/04", status: "pending", created_by: "d.marsh", created_at: iso(NOW - DAY), dispatched: [], held: [], skipped: [] },
+  { job_id: "e5f6a7b8", tenant_id: "cambrian", test_type: "function", scope: { site_id: "maesyrhaf" }, scope_name: "Maes-yr-Haf", run_at: iso(NOW - 3 * DAY), stagger_window_min: 30, note: "Gateway back — confirm every fitting still tests", status: "done", created_by: "n.sacke", created_at: iso(NOW - 4 * DAY), dispatched: Array.from({ length: 12 }, (_, i) => `maesyrhaf-el-${String(i + 1).padStart(2, "0")}`), held: [], skipped: [], finished_at: iso(NOW - 3 * DAY + 3600000) },
+];
+const deviceNext = (latest) => ({ function_in_days: Math.max(0, 31 - (latest.days_since_function_test ?? 0)), duration_in_days: latest.days_since_duration_test != null ? Math.max(0, 365 - latest.days_since_duration_test) : null });
 
 // ---------------- API surface ----------------
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -167,7 +166,7 @@ export async function demoGet(path) {
   await wait(120 + rnd() * 200);
   let m;
   if (/^\/api\/portfolio/.test(path)) {
-    const sites = Object.values(DB.sites).map((s) => ({ ...DB.siteStates[s.site_id], site_id: s.site_id, name: s.name, kind: s.kind, address: s.address, gps: s.gps, tz: s.tz, next_runs: nextRuns(s) }));
+    const sites = Object.values(DB.sites).map((s) => ({ ...DB.siteStates[s.site_id], site_id: s.site_id, name: s.name, kind: s.kind, address: s.address, gps: s.gps, tz: s.tz }));
     const t = sites.reduce((a, x) => ({ sites: a.sites + 1, luminaires: a.luminaires + x.luminaires, compliant: a.compliant + x.compliant, overdue: a.overdue + x.overdue, failed: a.failed + x.failed, open_faults: a.open_faults + x.open_faults,
       sites_alert: a.sites_alert + (x.status === "alert"), sites_warn: a.sites_warn + (x.status === "warn") }), { sites: 0, luminaires: 0, compliant: 0, overdue: 0, failed: 0, open_faults: 0, sites_alert: 0, sites_warn: 0 });
     return { tenant: "cambrian", totals: [{ tenant_id: "cambrian", ...t, compliant_pct: Math.round((t.compliant / t.luminaires) * 1000) / 10, computed_at: iso(NOW - 3 * 3600000) }], sites };
@@ -179,8 +178,9 @@ export async function demoGet(path) {
   }
   if ((m = /^\/api\/sites\/([^/]+)$/.exec(path))) {
     const site = DB.sites[m[1]]; if (!site) throw new Error("not found");
-    const luminaires = Object.values(DB.lums).filter((l) => l.lum.site_id === site.site_id).map((l) => ({ ...l.lum, state: l.state }));
-    return { site, state: DB.siteStates[site.site_id], next_runs: nextRuns(site), luminaires };
+    const luminaires = Object.values(DB.lums).filter((l) => l.lum.site_id === site.site_id).map((l) => ({ ...l.lum, state: l.state, device_next: deviceNext(l.latest) }));
+    const jobs = JOBS.filter((j) => j.scope.site_id === site.site_id || luminaires.some((l) => l.luminaire_id === j.scope.luminaire_id));
+    return { site, state: DB.siteStates[site.site_id], jobs, luminaires };
   }
   if ((m = /^\/api\/luminaires\/([^/]+)\/events/.exec(path))) {
     const l = DB.lums[m[1]]; if (!l) throw new Error("not found");
@@ -197,6 +197,7 @@ export async function demoGet(path) {
     return { luminaire: { ...l.lum, site_name: site.name }, state: l.state, latest: l.latest, tests: l.tests, faults: l.faults,
       dispatches: [{ test_type: "function", occurrence: `function:${iso(NOW).slice(0, 7)}`, by: "schedule", at: l.tests[0]?.started_at }] };
   }
+  if (/^\/api\/jobs/.test(path)) return { jobs: [...JOBS].sort((a, b) => (a.run_at < b.run_at ? 1 : -1)) };
   if (/^\/api\/exceptions/.test(path)) {
     const ex = Object.values(DB.lums).filter((l) => l.state.status !== "ok").map((l) => ({ luminaire_id: l.lum.luminaire_id, name: l.lum.name, location: l.lum.location, site_id: l.lum.site_id, site_name: DB.sites[l.lum.site_id].name, state: l.state, faults: l.faults.filter((f) => f.status !== "closed") }));
     ex.sort((a, b) => (a.state.status === b.state.status ? 0 : a.state.status === "alert" ? -1 : 1));
@@ -232,9 +233,13 @@ export async function demoPost(path, body) {
     const at = iso(Date.now());
     return { accepted: true, test_type: body.test_type, at, note: "queued at the network server — the luminaire reports test-start when it begins" };
   }
-  if (/^\/api\/sites\/[^/]+\/schedule/.test(path)) {
-    const id = path.split("/")[3]; DB.sites[id].test_schedule = body.test_schedule; return { site_id: id, test_schedule: body.test_schedule, next_runs: nextRuns(DB.sites[id]) };
+  if (path === "/api/jobs") {
+    const scopeName = body.scope?.site_id ? DB.sites[body.scope.site_id]?.name : DB.lums[body.scope?.luminaire_id]?.lum.name;
+    if (!scopeName) throw new Error("scope not found");
+    const job = { job_id: Math.random().toString(16).slice(2, 10), tenant_id: "cambrian", test_type: body.test_type, scope: body.scope, scope_name: scopeName, run_at: new Date(body.run_at).toISOString(), stagger_window_min: Number(body.stagger_window_min ?? 60), note: body.note || "", status: "pending", created_by: "you", created_at: iso(Date.now()), dispatched: [], held: [], skipped: [] };
+    JOBS.push(job); return { job };
   }
+  if (path === "/api/jobs/cancel") { const j = JOBS.find((x) => x.job_id === body.job_id); if (!j) throw new Error("job not found"); Object.assign(j, { status: "cancelled", cancelled_by: "you", cancelled_at: iso(Date.now()) }); return { job: j }; }
   if (path === "/api/tests/manual") {
     const l = DB.lums[body.luminaire_id]; const t = { kind: "TEST", test_type: body.test_type, result: body.result, started_at: body.at, finished_at: body.at, achieved_min: body.achieved_min || null, rated_min: l.lum.rated_minutes, flags: [], source: "manual", entered_by: "you", note: body.note || "" };
     l.tests.unshift(t); l.tests.sort((a, b) => (a.finished_at < b.finished_at ? 1 : -1)); return { test: t };
